@@ -383,13 +383,6 @@ class CentralMonitoramento(ctk.CTk):
         )
         self.btn_toggle_sidebar.pack(side="right", fill="y")
 
-        # Binds para redimensionamento da sidebar
-        self.container_toggle.configure(cursor="sb_h_double_arrow")
-        self.container_toggle.bind("<Button-1>", self.iniciar_redimensionamento)
-        self.container_toggle.bind("<B1-Motion>", self.redimensionar_sidebar)
-        self.lbl_lista_vertical.bind("<Button-1>", self.iniciar_redimensionamento)
-        self.lbl_lista_vertical.bind("<B1-Motion>", self.redimensionar_sidebar)
-        self.lbl_lista_vertical.configure(cursor="sb_h_double_arrow")
 
         # 3. Main Frame (Coluna 2)
         self.main_frame = ctk.CTkFrame(self, fg_color=self.BG_MAIN, corner_radius=0)
@@ -503,18 +496,6 @@ class CentralMonitoramento(ctk.CTk):
                 time.sleep(1)
 
     # --- LÓGICA DO TOGGLE DA SIDEBAR ---
-    def iniciar_redimensionamento(self, event):
-        self._x_inicio_redimensionamento = event.x_root
-        self._largura_inicio_sidebar = self.sidebar.winfo_width()
-
-    def redimensionar_sidebar(self, event):
-        delta_x = event.x_root - self._x_inicio_redimensionamento
-        nova_largura = max(200, min(800, self._largura_inicio_sidebar + delta_x))
-        self.sidebar.configure(width=nova_largura)
-        # Força o update do layout
-        self.update_idletasks()
-        self.atualizar_lista_cameras_ui()
-
     def toggle_sidebar(self):
         if self.sidebar_visible:
             self.sidebar.grid_forget()
@@ -1557,8 +1538,8 @@ class CentralMonitoramento(ctk.CTk):
             lbl_thumb = None
             nome = self.dados_cameras.get(ip, f"IP {ip}")
             cor = self.ACCENT_WINE if ip == self.ip_selecionado else "transparent"
-            frm = ctk.CTkFrame(self.scroll_frame, height=85, fg_color=cor, border_width=1, border_color=self.GRAY_DARK)
-            frm.pack(fill="x", pady=2); frm.pack_propagate(False)
+            frm = ctk.CTkFrame(self.scroll_frame, fg_color=cor, border_width=1, border_color=self.GRAY_DARK)
+            frm.pack(fill="x", pady=2)
 
             # Miniatura (Thumbnail)
             caminho_print = os.path.join(self.diretorio_prints, f"{ip.replace('.', '_')}.png")
