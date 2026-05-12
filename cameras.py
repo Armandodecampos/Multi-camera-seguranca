@@ -383,6 +383,14 @@ class CentralMonitoramento(ctk.CTk):
         )
         self.btn_toggle_sidebar.pack(side="right", fill="y")
 
+        # Binds para redimensionamento da sidebar
+        self.container_toggle.configure(cursor="sb_h_double_arrow")
+        self.container_toggle.bind("<Button-1>", self.iniciar_redimensionamento)
+        self.container_toggle.bind("<B1-Motion>", self.redimensionar_sidebar)
+        self.lbl_lista_vertical.bind("<Button-1>", self.iniciar_redimensionamento)
+        self.lbl_lista_vertical.bind("<B1-Motion>", self.redimensionar_sidebar)
+        self.lbl_lista_vertical.configure(cursor="sb_h_double_arrow")
+
         # 3. Main Frame (Coluna 2)
         self.main_frame = ctk.CTkFrame(self, fg_color=self.BG_MAIN, corner_radius=0)
         self.main_frame.grid(row=0, column=2, sticky="nsew")
@@ -495,6 +503,18 @@ class CentralMonitoramento(ctk.CTk):
                 time.sleep(1)
 
     # --- LÓGICA DO TOGGLE DA SIDEBAR ---
+    def iniciar_redimensionamento(self, event):
+        self._x_inicio_redimensionamento = event.x_root
+        self._largura_inicio_sidebar = self.sidebar.winfo_width()
+
+    def redimensionar_sidebar(self, event):
+        delta_x = event.x_root - self._x_inicio_redimensionamento
+        nova_largura = max(200, min(800, self._largura_inicio_sidebar + delta_x))
+        self.sidebar.configure(width=nova_largura)
+        # Força o update do layout
+        self.update_idletasks()
+        self.atualizar_lista_cameras_ui()
+
     def toggle_sidebar(self):
         if self.sidebar_visible:
             self.sidebar.grid_forget()
@@ -1532,11 +1552,12 @@ class CentralMonitoramento(ctk.CTk):
             child.destroy()
         self.botoes_referencia = {}
 
+        largura_sidebar = self.sidebar.winfo_width()
         for ip in self.obter_ips_ordenados():
             lbl_thumb = None
             nome = self.dados_cameras.get(ip, f"IP {ip}")
             cor = self.ACCENT_WINE if ip == self.ip_selecionado else "transparent"
-            frm = ctk.CTkFrame(self.scroll_frame, height=50, fg_color=cor, border_width=1, border_color=self.GRAY_DARK)
+            frm = ctk.CTkFrame(self.scroll_frame, height=85, fg_color=cor, border_width=1, border_color=self.GRAY_DARK)
             frm.pack(fill="x", pady=2); frm.pack_propagate(False)
 
             # Miniatura (Thumbnail)
@@ -1544,8 +1565,8 @@ class CentralMonitoramento(ctk.CTk):
             if os.path.exists(caminho_print):
                 try:
                     img_pil = Image.open(caminho_print)
-                    img_ctk = ctk.CTkImage(img_pil, size=(50, 35))
-                    lbl_thumb = ctk.CTkLabel(frm, image=img_ctk, text="", width=50)
+                    img_ctk = ctk.CTkImage(img_pil, size=(100, 70))
+                    lbl_thumb = ctk.CTkLabel(frm, image=img_ctk, text="", width=100)
                     lbl_thumb.pack(side="left", padx=2)
                 except: pass
 
@@ -1553,7 +1574,10 @@ class CentralMonitoramento(ctk.CTk):
             txt_container = ctk.CTkFrame(frm, fg_color="transparent")
             txt_container.pack(side="left", fill="both", expand=True)
 
-            lbl_nome = ctk.CTkLabel(txt_container, text=nome, font=("Roboto", 13, "bold"), text_color=self.TEXT_P, anchor="w")
+            # Cálculo aproximado de wraplength baseado na largura da sidebar
+            wrap_val = max(100, largura_sidebar - 180)
+            lbl_nome = ctk.CTkLabel(txt_container, text=nome, font=("Roboto", 13, "bold"),
+                                    text_color=self.TEXT_P, anchor="w", justify="left", wraplength=wrap_val)
             lbl_nome.pack(fill="x", padx=10, pady=(4, 0))
             lbl_ip = ctk.CTkLabel(txt_container, text=ip, font=("Roboto", 11), text_color=self.TEXT_S, anchor="w")
             lbl_ip.pack(fill="x", padx=10, pady=(0, 4))
