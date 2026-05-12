@@ -404,10 +404,6 @@ class CentralMonitoramento(ctk.CTk):
                                               fg_color=self.GRAY_DARK, hover_color=self.TEXT_S,
                                               corner_radius=0, command=self.abrir_menu_opcoes)
 
-        self.btn_screenshot = ctk.CTkButton(self.grid_frame, text="📷", width=40, height=35,
-                                             fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
-                                             corner_radius=0, command=self.tirar_screenshot)
-
         self.slot_frames = []
         self.slot_labels = []
         for i in range(20):
@@ -820,7 +816,6 @@ class CentralMonitoramento(ctk.CTk):
 
         if not ip_atual or ip_atual == "0.0.0.0":
             self.btn_expandir.place_forget()
-            self.btn_screenshot.place_forget()
             self.btn_mais_opcoes.place_forget()
             return
 
@@ -829,40 +824,34 @@ class CentralMonitoramento(ctk.CTk):
         if self.slot_maximized is not None:
             # Estado Maximizado
             h, spc = 70, 10
-            w_opt, w_print, w_exp = 180, 180, 250
-            f_main, f_icon = ("Roboto", 16, "bold"), ("Roboto", 24)
+            w_opt, w_exp = 180, 250
+            f_main = ("Roboto", 16, "bold")
 
             self.btn_expandir.configure(text="Diminuir", width=w_exp, height=h, font=f_main)
-            self.btn_screenshot.configure(width=w_print, height=h, font=f_icon)
             self.btn_mais_opcoes.configure(width=w_opt, height=h, font=f_main)
 
             # Offsets (anchor="se")
             x_opt = -10
-            x_print = x_opt - w_opt - spc
-            x_exp = x_print - w_print - spc
+            x_exp = x_opt - w_opt - spc
         else:
             # Estado Normal
             h, spc = 35, 5
-            w_opt, w_print, w_exp = 100, 100, 120
-            f_main, f_icon = ("Roboto", 12), ("Roboto", 12)
+            w_opt, w_exp = 100, 120
+            f_main = ("Roboto", 12)
 
             self.btn_expandir.configure(text="Aumentar", width=w_exp, height=h, font=f_main)
-            self.btn_screenshot.configure(width=w_print, height=h, font=f_icon)
             self.btn_mais_opcoes.configure(width=w_opt, height=h, font=f_main)
 
             # Offsets
             x_opt = -10
-            x_print = x_opt - w_opt - spc
-            x_exp = x_print - w_print - spc
+            x_exp = x_opt - w_opt - spc
 
         # Aplica posicionamento
         self.btn_mais_opcoes.place(in_=target_frm, relx=1.0, rely=1.0, x=x_opt, y=-10, anchor="se")
-        self.btn_screenshot.place(in_=target_frm, relx=1.0, rely=1.0, x=x_print, y=-10, anchor="se")
         self.btn_expandir.place(in_=target_frm, relx=1.0, rely=1.0, x=x_exp, y=-10, anchor="se")
 
         # Garante que fiquem no topo
         self.btn_expandir.lift()
-        self.btn_screenshot.lift()
         self.btn_mais_opcoes.lift()
 
     def toggle_grid_layout(self):
@@ -904,11 +893,6 @@ class CentralMonitoramento(ctk.CTk):
                                     corner_radius=0, height=40,
                                     command=lambda: [self.limpar_slot_atual(), modal.destroy()])
         btn_desabilitar.pack(fill="x", padx=40, pady=5)
-
-        btn_print = ctk.CTkButton(modal, text="Tirar Print", fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
-                                   corner_radius=0, height=40,
-                                   command=lambda: [self.tirar_screenshot(ip), modal.destroy()])
-        btn_print.pack(fill="x", padx=40, pady=5)
 
     def abrir_modal_input(self, titulo, mensagem, callback, valor_inicial=""):
         modal = ctk.CTkToplevel(self)
@@ -1775,24 +1759,6 @@ class CentralMonitoramento(ctk.CTk):
             self.predefinicao_widgets[nome] = frm
 
     # --- MÉTODOS DE SCREENSHOT ---
-    def tirar_screenshot(self, ip=None):
-        target_ip = ip if ip else self.ip_selecionado
-        if not target_ip or target_ip == "0.0.0.0":
-            return
-
-        handler = self.camera_handlers.get(target_ip)
-        if not handler or handler == "CONECTANDO":
-            return
-
-        frame = handler.pegar_frame()
-        if frame:
-            caminho = os.path.join(self.diretorio_prints, f"{target_ip.replace('.', '_')}.png")
-            try:
-                frame.save(caminho)
-                # print(f"LOG: Screenshot salva em {caminho}")
-                self.atualizar_lista_cameras_ui()
-            except Exception as e:
-                print(f"Erro ao salvar screenshot: {e}")
 
 if __name__ == "__main__":
     app = CentralMonitoramento()
