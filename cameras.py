@@ -1094,7 +1094,7 @@ class CentralMonitoramento(ctk.CTk):
                 del self.camera_handlers[ip]
                 self.iniciar_conexao_assincrona(ip, novo_canal)
 
-    def formatar_nome(self, nome, max_chars=25):
+    def formatar_nome(self, nome, max_chars=100):
         if not nome: return ""
         if len(nome) > max_chars: return nome[:max_chars-3] + "..."
         return nome
@@ -1553,13 +1553,18 @@ class CentralMonitoramento(ctk.CTk):
 
             # Container para o texto (Label)
             txt_container = ctk.CTkFrame(frm, fg_color="transparent")
-            txt_container.pack(side="left", fill="both", expand=True)
+            txt_container.pack(side="left", fill="both", expand=True, pady=5)
 
             # Cálculo aproximado de wraplength baseado na largura da sidebar
-            wrap_val = max(100, largura_sidebar - 180)
+            # Reduzido para garantir que não corte e forçar o wrap mais cedo
+            wrap_val = max(100, largura_sidebar - 200)
             lbl_nome = ctk.CTkLabel(txt_container, text=nome, font=("Roboto", 13, "bold"),
-                                    text_color=self.TEXT_P, anchor="w", justify="left", wraplength=wrap_val, height=0)
-            lbl_nome.pack(fill="x", padx=10, pady=(4, 0))
+                                    text_color=self.TEXT_P, anchor="nw", justify="left", wraplength=wrap_val, height=0)
+            lbl_nome.pack(fill="x", padx=10, pady=(2, 2))
+
+            # Força wraplength no label interno do tkinter (customtkinter às vezes não aplica corretamente)
+            try: lbl_nome._label.configure(wraplength=wrap_val)
+            except: pass
             lbl_ip = ctk.CTkLabel(txt_container, text=ip, font=("Roboto", 11), text_color=self.TEXT_S, anchor="w")
             lbl_ip.pack(fill="x", padx=10, pady=(0, 4))
 
@@ -1760,10 +1765,14 @@ class CentralMonitoramento(ctk.CTk):
             btn_save.pack(side="right", padx=2)
 
             # Label de Nome (Expandível)
-            wrap_val = max(100, largura_sidebar - 140)
+            wrap_val = max(100, largura_sidebar - 160)
             lbl = ctk.CTkLabel(frm, text=nome, font=("Roboto", 13, "bold"), text_color=self.TEXT_P,
-                               anchor="w", cursor="hand2", wraplength=wrap_val, justify="left", height=0)
-            lbl.pack(side="left", expand=True, fill="both", padx=10, pady=5)
+                               anchor="nw", cursor="hand2", wraplength=wrap_val, justify="left", height=0)
+            lbl.pack(side="left", expand=True, fill="both", padx=10, pady=10)
+
+            # Força wraplength no label interno
+            try: lbl._label.configure(wraplength=wrap_val)
+            except: pass
             lbl.bind("<Button-1>", lambda e, n=nome: self.aplicar_predefinicao(n))
 
             self.predefinicao_widgets[nome] = frm
