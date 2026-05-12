@@ -861,7 +861,7 @@ class CentralMonitoramento(ctk.CTk):
         # Cria a janela modal
         modal = ctk.CTkToplevel(self)
         modal.title(f"Opções - {ip}")
-        modal.geometry("400x350")
+        modal.geometry("400x300")
         modal.resizable(False, False)
         modal.attributes("-topmost", True)
 
@@ -869,7 +869,7 @@ class CentralMonitoramento(ctk.CTk):
         try:
             self.update_idletasks()
             x = self.winfo_x() + (self.winfo_width() // 2) - 200
-            y = self.winfo_y() + (self.winfo_height() // 2) - 175
+            y = self.winfo_y() + (self.winfo_height() // 2) - 150
             modal.geometry(f"+{x}+{y}")
         except: pass
 
@@ -880,23 +880,18 @@ class CentralMonitoramento(ctk.CTk):
         # Botões com canto quadrado (corner_radius=0)
         btn_excluir = ctk.CTkButton(modal, text="Excluir", fg_color=self.ACCENT_RED, hover_color=self.ACCENT_WINE,
                                      corner_radius=0, height=40,
-                                     command=lambda: [self.limpar_slot_atual(), modal.destroy()])
+                                     command=lambda: [modal.destroy(), self.confirmar_exclusao_camera_da_lista(ip)])
         btn_excluir.pack(fill="x", padx=40, pady=5)
 
-        btn_editar = ctk.CTkButton(modal, text="Editar", fg_color=self.GRAY_DARK, hover_color=self.TEXT_S,
+        btn_desabilitar = ctk.CTkButton(modal, text="Desabilitar", fg_color=self.GRAY_DARK, hover_color=self.TEXT_S,
                                     corner_radius=0, height=40,
-                                    command=lambda: [modal.destroy(), self.alternar_edicao_nome()])
-        btn_editar.pack(fill="x", padx=40, pady=5)
+                                    command=lambda: [self.limpar_slot_atual(), modal.destroy()])
+        btn_desabilitar.pack(fill="x", padx=40, pady=5)
 
         btn_print = ctk.CTkButton(modal, text="Tirar Print", fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
                                    corner_radius=0, height=40,
                                    command=lambda: [self.tirar_screenshot(ip), modal.destroy()])
         btn_print.pack(fill="x", padx=40, pady=5)
-
-        btn_fechar = ctk.CTkButton(modal, text="Fechar", fg_color="#444444", hover_color="#666666",
-                                    corner_radius=0, height=40,
-                                    command=modal.destroy)
-        btn_fechar.pack(fill="x", padx=40, pady=(20, 0))
 
     def abrir_modal_input(self, titulo, mensagem, callback, valor_inicial=""):
         modal = ctk.CTkToplevel(self)
@@ -1563,11 +1558,6 @@ class CentralMonitoramento(ctk.CTk):
             lbl_ip = ctk.CTkLabel(txt_container, text=ip, font=("Roboto", 11), text_color=self.TEXT_S, anchor="w")
             lbl_ip.pack(fill="x", padx=10, pady=(0, 4))
 
-            # Botão de Deletar
-            btn_del = ctk.CTkButton(frm, text="X", width=30, height=30, fg_color="transparent",
-                                     text_color=self.TEXT_S, hover_color=self.ACCENT_RED,
-                                     command=lambda x=ip: self.confirmar_exclusao_camera_da_lista(x))
-            btn_del.pack(side="right", padx=5)
 
             widgets_para_bind = [txt_container, lbl_nome, lbl_ip]
             if lbl_thumb:
