@@ -1526,6 +1526,10 @@ class CentralMonitoramento(ctk.CTk):
 
     def atualizar_lista_cameras_ui(self):
         self.update_idletasks()
+        # Pequeno delay para garantir que o scroll_frame e sidebar tenham dimensões reais
+        self.after(10, self._atualizar_lista_cameras_ui_impl)
+
+    def _atualizar_lista_cameras_ui_impl(self):
         for child in self.scroll_frame.winfo_children():
             child.destroy()
         self.botoes_referencia = {}
@@ -1557,13 +1561,16 @@ class CentralMonitoramento(ctk.CTk):
 
             # Cálculo aproximado de wraplength baseado na largura da sidebar
             # Reduzido para garantir que não corte e forçar o wrap mais cedo
-            wrap_val = max(100, largura_sidebar - 200)
-            lbl_nome = ctk.CTkLabel(txt_container, text=nome, font=("Roboto", 13, "bold"),
-                                    text_color=self.TEXT_P, anchor="nw", justify="left", wraplength=wrap_val, height=0)
+            wrap_val = max(100, largura_sidebar - 210)
+            lbl_nome = ctk.CTkLabel(txt_container, text=nome, font=("Roboto", 12, "bold"),
+                                    text_color=self.TEXT_P, anchor="w", justify="left",
+                                    wraplength=wrap_val, width=wrap_val, height=0)
             lbl_nome.pack(fill="x", padx=10, pady=(2, 2))
 
             # Força wraplength no label interno do tkinter (customtkinter às vezes não aplica corretamente)
-            try: lbl_nome._label.configure(wraplength=wrap_val)
+            try:
+                lbl_nome.update_idletasks()
+                lbl_nome._label.configure(wraplength=wrap_val)
             except: pass
             lbl_ip = ctk.CTkLabel(txt_container, text=ip, font=("Roboto", 11), text_color=self.TEXT_S, anchor="w")
             lbl_ip.pack(fill="x", padx=10, pady=(0, 4))
@@ -1731,6 +1738,9 @@ class CentralMonitoramento(ctk.CTk):
 
     def atualizar_lista_predefinicoes_ui(self):
         self.update_idletasks()
+        self.after(10, self._atualizar_lista_predefinicoes_ui_impl)
+
+    def _atualizar_lista_predefinicoes_ui_impl(self):
         for child in self.scroll_predefinicoes.winfo_children():
             child.destroy()
         self.predefinicao_widgets = {}
@@ -1766,12 +1776,14 @@ class CentralMonitoramento(ctk.CTk):
 
             # Label de Nome (Expandível)
             wrap_val = max(100, largura_sidebar - 160)
-            lbl = ctk.CTkLabel(frm, text=nome, font=("Roboto", 13, "bold"), text_color=self.TEXT_P,
-                               anchor="nw", cursor="hand2", wraplength=wrap_val, justify="left", height=0)
+            lbl = ctk.CTkLabel(frm, text=nome, font=("Roboto", 12, "bold"), text_color=self.TEXT_P,
+                               anchor="w", cursor="hand2", wraplength=wrap_val, width=wrap_val, justify="left", height=0)
             lbl.pack(side="left", expand=True, fill="both", padx=10, pady=10)
 
             # Força wraplength no label interno
-            try: lbl._label.configure(wraplength=wrap_val)
+            try:
+                lbl.update_idletasks()
+                lbl._label.configure(wraplength=wrap_val)
             except: pass
             lbl.bind("<Button-1>", lambda e, n=nome: self.aplicar_predefinicao(n))
 
