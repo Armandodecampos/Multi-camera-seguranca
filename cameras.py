@@ -867,7 +867,7 @@ class CentralMonitoramento(ctk.CTk):
         # Cria a janela modal
         modal = ctk.CTkToplevel(self)
         modal.title(f"Opções - {ip}")
-        modal.geometry("400x300")
+        modal.geometry("400x420")
         modal.resizable(False, False)
         modal.attributes("-topmost", True)
 
@@ -875,7 +875,7 @@ class CentralMonitoramento(ctk.CTk):
         try:
             self.update_idletasks()
             x = self.winfo_x() + (self.winfo_width() // 2) - 200
-            y = self.winfo_y() + (self.winfo_height() // 2) - 150
+            y = self.winfo_y() + (self.winfo_height() // 2) - 210
             modal.geometry(f"+{x}+{y}")
         except: pass
 
@@ -884,15 +884,25 @@ class CentralMonitoramento(ctk.CTk):
         ctk.CTkLabel(modal, text=ip, font=("Roboto", 14), text_color=self.TEXT_S).pack(pady=(0, 20))
 
         # Botões com canto quadrado (corner_radius=0)
-        btn_excluir = ctk.CTkButton(modal, text="Excluir", fg_color=self.ACCENT_RED, hover_color=self.ACCENT_WINE,
-                                     corner_radius=0, height=40,
-                                     command=lambda: [modal.destroy(), self.confirmar_exclusao_camera_da_lista(ip)])
-        btn_excluir.pack(fill="x", padx=40, pady=5)
+        btn_renomear = ctk.CTkButton(modal, text="Renomear", fg_color=self.GRAY_DARK, hover_color=self.TEXT_S,
+                                    corner_radius=0, height=40,
+                                    command=lambda: [modal.destroy(), self.alternar_edicao_nome()])
+        btn_renomear.pack(fill="x", padx=40, pady=5)
+
+        btn_capturar = ctk.CTkButton(modal, text="Capturar imagem", fg_color=self.GRAY_DARK, hover_color=self.TEXT_S,
+                                    corner_radius=0, height=40,
+                                    command=lambda: [modal.destroy(), self.capturar_imagem()])
+        btn_capturar.pack(fill="x", padx=40, pady=5)
 
         btn_desabilitar = ctk.CTkButton(modal, text="Desabilitar", fg_color=self.GRAY_DARK, hover_color=self.TEXT_S,
                                     corner_radius=0, height=40,
                                     command=lambda: [self.limpar_slot_atual(), modal.destroy()])
         btn_desabilitar.pack(fill="x", padx=40, pady=5)
+
+        btn_excluir = ctk.CTkButton(modal, text="Excluir", fg_color=self.ACCENT_RED, hover_color=self.ACCENT_WINE,
+                                     corner_radius=0, height=40,
+                                     command=lambda: [modal.destroy(), self.confirmar_exclusao_camera_da_lista(ip)])
+        btn_excluir.pack(fill="x", padx=40, pady=5)
 
     def abrir_modal_input(self, titulo, mensagem, callback, valor_inicial=""):
         modal = ctk.CTkToplevel(self)
@@ -1790,6 +1800,41 @@ class CentralMonitoramento(ctk.CTk):
             self.predefinicao_widgets[nome] = frm
 
     # --- MÉTODOS DE SCREENSHOT ---
+    def capturar_imagem(self):
+        if not self.ip_selecionado:
+            self.abrir_modal_alerta("Aviso", "Nenhuma câmera selecionada.")
+            return
+
+        handler = self.camera_handlers.get(self.ip_selecionado)
+        if not handler or handler == "CONECTANDO" or not handler.conectado:
+            self.abrir_modal_alerta("Erro", "A câmera selecionada não está conectada.")
+            return
+
+        # Pega o frame atual
+        with handler.lock:
+            frame_pil = handler.frame_pil
+
+        if frame_pil:
+            try:
+                ip_limpo = self.ip_selecionado.replace(".", "_")
+                timestamp = time.strftime("%Y%m%d_%H%M%S")
+
+                # 1. Salva para o histórico (timestamp)
+                caminho_hist = os.path.join(self.diretorio_prints, f"{ip_limpo}_{timestamp}.png")
+                frame_pil.save(caminho_hist)
+
+                # 2. Salva como thumbnail (sobrescreve o padrão do IP)
+                caminho_thumb = os.path.join(self.diretorio_prints, f"{ip_limpo}.png")
+                frame_pil.save(caminho_thumb)
+
+                self.abrir_modal_alerta("Sucesso", f"Imagem capturada com sucesso!\nSalva em: {os.path.basename(caminho_hist)}")
+
+                # Atualiza a lista lateral para refletir a nova miniatura
+                self.atualizar_lista_cameras_ui()
+            except Exception as e:
+                self.abrir_modal_alerta("Erro", f"Falha ao salvar imagem: {e}")
+        else:
+            self.abrir_modal_alerta("Erro", "Não foi possível obter um frame válido da câmera.")
 
 if __name__ == "__main__":
     app = CentralMonitoramento()
