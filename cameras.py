@@ -1525,11 +1525,15 @@ class CentralMonitoramento(ctk.CTk):
             pass
 
     def atualizar_lista_cameras_ui(self):
+        self.update_idletasks()
         for child in self.scroll_frame.winfo_children():
             child.destroy()
         self.botoes_referencia = {}
 
         largura_sidebar = self.sidebar.winfo_width()
+        if largura_sidebar <= 1:
+            largura_sidebar = 320
+
         for ip in self.obter_ips_ordenados():
             lbl_thumb = None
             nome = self.dados_cameras.get(ip, f"IP {ip}")
@@ -1554,7 +1558,7 @@ class CentralMonitoramento(ctk.CTk):
             # Cálculo aproximado de wraplength baseado na largura da sidebar
             wrap_val = max(100, largura_sidebar - 180)
             lbl_nome = ctk.CTkLabel(txt_container, text=nome, font=("Roboto", 13, "bold"),
-                                    text_color=self.TEXT_P, anchor="w", justify="left", wraplength=wrap_val)
+                                    text_color=self.TEXT_P, anchor="w", justify="left", wraplength=wrap_val, height=0)
             lbl_nome.pack(fill="x", padx=10, pady=(4, 0))
             lbl_ip = ctk.CTkLabel(txt_container, text=ip, font=("Roboto", 11), text_color=self.TEXT_S, anchor="w")
             lbl_ip.pack(fill="x", padx=10, pady=(0, 4))
@@ -1721,15 +1725,19 @@ class CentralMonitoramento(ctk.CTk):
                                on_name_entered, valor_inicial=nome_antigo)
 
     def atualizar_lista_predefinicoes_ui(self):
+        self.update_idletasks()
         for child in self.scroll_predefinicoes.winfo_children():
             child.destroy()
         self.predefinicao_widgets = {}
 
+        largura_sidebar = self.sidebar.winfo_width()
+        if largura_sidebar <= 1:
+            largura_sidebar = 320
+
         for nome in sorted(self.predefinicoes.keys(), key=str.lower):
             cor = self.ACCENT_WINE if nome == self.ultima_predefinicao else self.BG_SIDEBAR
-            frm = ctk.CTkFrame(self.scroll_predefinicoes, height=50, fg_color=cor, border_width=1, border_color=self.GRAY_DARK)
+            frm = ctk.CTkFrame(self.scroll_predefinicoes, fg_color=cor, border_width=1, border_color=self.GRAY_DARK)
             frm.pack(fill="x", pady=2, padx=2)
-            frm.pack_propagate(False)
 
             # Bind no Frame para facilitar o clique
             frm.bind("<Button-1>", lambda e, n=nome: self.aplicar_predefinicao(n))
@@ -1752,8 +1760,10 @@ class CentralMonitoramento(ctk.CTk):
             btn_save.pack(side="right", padx=2)
 
             # Label de Nome (Expandível)
-            lbl = ctk.CTkLabel(frm, text=nome, font=("Roboto", 13, "bold"), text_color=self.TEXT_P, anchor="w", cursor="hand2")
-            lbl.pack(side="left", expand=True, fill="both", padx=10)
+            wrap_val = max(100, largura_sidebar - 140)
+            lbl = ctk.CTkLabel(frm, text=nome, font=("Roboto", 13, "bold"), text_color=self.TEXT_P,
+                               anchor="w", cursor="hand2", wraplength=wrap_val, justify="left", height=0)
+            lbl.pack(side="left", expand=True, fill="both", padx=10, pady=5)
             lbl.bind("<Button-1>", lambda e, n=nome: self.aplicar_predefinicao(n))
 
             self.predefinicao_widgets[nome] = frm
