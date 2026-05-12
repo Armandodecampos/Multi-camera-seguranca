@@ -667,9 +667,7 @@ class CentralMonitoramento(ctk.CTk):
             else:
                 handler.set_prioridade(False)
                 handler.set_canal(self.obter_canal_alvo(ip))
-        self.btn_expandir.lift()
-        self.btn_mais_opcoes.lift()
-        self.btn_screenshot.lift()
+        self.atualizar_botoes_controle()
 
     def ao_pressionar_slot(self, event, index):
         self.selecionar_slot(index)
@@ -737,9 +735,7 @@ class CentralMonitoramento(ctk.CTk):
             handler.set_canal(self.obter_canal_alvo(ip))
 
         self.slot_maximized = None
-        self.btn_expandir.lift()
-        self.btn_mais_opcoes.lift()
-        self.btn_screenshot.lift()
+        self.atualizar_botoes_controle()
 
     def selecionar_slot(self, index):
         if not (0 <= index < 20): return
@@ -768,27 +764,11 @@ class CentralMonitoramento(ctk.CTk):
             if handler and handler != "CONECTANDO":
                 handler.set_exibir_info(True)
 
-            # Botões de Controle: Aumentar e Mais Opções
-            txt_exp = "Diminuir" if self.slot_maximized == index else "Aumentar"
-            self.btn_expandir.configure(text=txt_exp)
-
-            # Ordem: Aumentar (Esquerda) | Print | Mais Opções (Direita)
-            self.btn_expandir.place(in_=self.slot_frames[index], relx=1.0, rely=1.0, x=-160, y=-10, anchor="se")
-            self.btn_screenshot.place(in_=self.slot_frames[index], relx=1.0, rely=1.0, x=-115, y=-10, anchor="se")
-            self.btn_mais_opcoes.place(in_=self.slot_frames[index], relx=1.0, rely=1.0, x=-10, y=-10, anchor="se")
-
-            self.btn_expandir.lift()
-            self.btn_mais_opcoes.lift()
-            self.btn_screenshot.lift()
-
             # Sincroniza o seletor de IP
             self.sincronizar_seletor_com_ip(ip_novo)
         else:
             if ip_anterior: self.pintar_botao(ip_anterior, "transparent")
             self.ip_selecionado = None
-            self.btn_expandir.place_forget()
-            self.btn_mais_opcoes.place_forget()
-            self.btn_screenshot.place_forget()
         self.atualizar_botoes_controle()
 
     def limpar_slot_atual(self):
@@ -804,10 +784,6 @@ class CentralMonitoramento(ctk.CTk):
         if self.ip_selecionado:
             self.pintar_botao(self.ip_selecionado, "transparent")
             self.ip_selecionado = None
-        
-        self.btn_expandir.place_forget()
-        self.btn_mais_opcoes.place_forget()
-        self.btn_screenshot.place_forget()
         
         if self.slot_maximized == idx: self.restaurar_grid()
         self.selecionar_slot(idx)
@@ -836,21 +812,62 @@ class CentralMonitoramento(ctk.CTk):
                 self.iniciar_conexao_assincrona(ip, 102)
 
     def atualizar_botoes_controle(self):
+        # Decide qual slot deve conter os botões
+        idx = self.slot_maximized if self.slot_maximized is not None else self.slot_selecionado
+
+        # Se não houver IP no slot ou slot inválido, esconde botões
+        ip_atual = self.grid_cameras[idx] if (idx is not None and 0 <= idx < 20) else "0.0.0.0"
+
+        if not ip_atual or ip_atual == "0.0.0.0":
+            self.btn_expandir.place_forget()
+            self.btn_screenshot.place_forget()
+            self.btn_mais_opcoes.place_forget()
+            return
+
+        target_frm = self.slot_frames[idx]
+
         if self.slot_maximized is not None:
-            self.btn_expandir.configure(text="Diminuir", width=200, height=70, font=("Roboto", 16, "bold"))
-            self.btn_screenshot.configure(width=70, height=70, font=("Roboto", 24))
-            # Reposiciona quando maximizado
-            self.btn_expandir.place(in_=self.slot_frames[self.slot_maximized], relx=1.0, rely=1.0, x=-285, y=-10, anchor="se")
-            self.btn_screenshot.place(in_=self.slot_frames[self.slot_maximized], relx=1.0, rely=1.0, x=-215, y=-10, anchor="se")
-            self.btn_mais_opcoes.place(in_=self.slot_frames[self.slot_maximized], relx=1.0, rely=1.0, x=-10, y=-10, anchor="se")
+            # Estado Maximizado
+            h, spc = 70, 10
+            w_opt, w_print, w_exp = 180, 180, 250
+            f_main, f_icon = ("Roboto", 16, "bold"), ("Roboto", 24)
+
+            self.btn_expandir.configure(text="Diminuir", width=w_exp, height=h, font=f_main)
+            self.btn_screenshot.configure(width=w_print, height=h, font=f_icon)
+            self.btn_mais_opcoes.configure(width=w_opt, height=h, font=f_main)
+
+            # Offsets (anchor="se")
+            x_opt = -10
+            x_print = x_opt - w_opt - spc
+            x_exp = x_print - w_print - spc
         else:
-            self.btn_expandir.configure(text="Aumentar", width=100, height=35, font=("Roboto", 12))
-            self.btn_screenshot.configure(width=40, height=35, font=("Roboto", 12))
+            # Estado Normal
+            h, spc = 35, 5
+            w_opt, w_print, w_exp = 100, 100, 120
+            f_main, f_icon = ("Roboto", 12), ("Roboto", 12)
+
+            self.btn_expandir.configure(text="Aumentar", width=w_exp, height=h, font=f_main)
+            self.btn_screenshot.configure(width=w_print, height=h, font=f_icon)
+            self.btn_mais_opcoes.configure(width=w_opt, height=h, font=f_main)
+
+            # Offsets
+            x_opt = -10
+            x_print = x_opt - w_opt - spc
+            x_exp = x_print - w_print - spc
+
+        # Aplica posicionamento
+        self.btn_mais_opcoes.place(in_=target_frm, relx=1.0, rely=1.0, x=x_opt, y=-10, anchor="se")
+        self.btn_screenshot.place(in_=target_frm, relx=1.0, rely=1.0, x=x_print, y=-10, anchor="se")
+        self.btn_expandir.place(in_=target_frm, relx=1.0, rely=1.0, x=x_exp, y=-10, anchor="se")
+
+        # Garante que fiquem no topo
+        self.btn_expandir.lift()
+        self.btn_screenshot.lift()
+        self.btn_mais_opcoes.lift()
 
     def toggle_grid_layout(self):
         if self.slot_maximized is not None: self.restaurar_grid()
         else: self.maximizar_slot(self.slot_selecionado)
-        self.atualizar_botoes_controle()
 
     def abrir_menu_opcoes(self):
         if not self.ip_selecionado: return
