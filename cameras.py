@@ -341,7 +341,7 @@ class CentralMonitoramento(ctk.CTk):
 
         self.btn_add_cam = ctk.CTkButton(self.frame_busca, text="+", width=35,
                                           fg_color=self.ACCENT_WINE, hover_color=self.ACCENT_RED,
-                                          command=self.abrir_modal_adicionar_camera)
+                                          command=lambda: self.solicitar_senha(self.abrir_modal_adicionar_camera))
         self.btn_add_cam.pack(side="right")
 
         self.scroll_frame = ctk.CTkScrollableFrame(tab_cams, fg_color="transparent")
@@ -901,10 +901,20 @@ class CentralMonitoramento(ctk.CTk):
 
         btn_excluir = ctk.CTkButton(modal, text="Excluir", fg_color=self.ACCENT_RED, hover_color=self.ACCENT_WINE,
                                      corner_radius=0, height=40,
-                                     command=lambda: [modal.destroy(), self.confirmar_exclusao_camera_da_lista(ip)])
+                                     command=lambda: [modal.destroy(), self.solicitar_senha(lambda: self.confirmar_exclusao_camera_da_lista(ip))])
         btn_excluir.pack(fill="x", padx=40, pady=5)
 
-    def abrir_modal_input(self, titulo, mensagem, callback, valor_inicial=""):
+    def solicitar_senha(self, callback):
+        def verificar(valor):
+            if valor == "passwordadm":
+                callback()
+            else:
+                self.abrir_modal_alerta("Erro", "Senha incorreta.")
+
+        self.abrir_modal_input(titulo="Autenticação", mensagem="Digite a senha de administrador:",
+                               callback=verificar, show="*")
+
+    def abrir_modal_input(self, titulo, mensagem, callback, valor_inicial="", show=""):
         modal = ctk.CTkToplevel(self)
         modal.title(titulo)
         modal.geometry("400x250")
@@ -920,7 +930,7 @@ class CentralMonitoramento(ctk.CTk):
 
         ctk.CTkLabel(modal, text=mensagem, font=("Roboto", 14, "bold"), text_color=self.TEXT_P).pack(pady=(20, 10))
 
-        entry = ctk.CTkEntry(modal, width=300)
+        entry = ctk.CTkEntry(modal, width=300, show=show)
         entry.insert(0, valor_inicial)
         entry.pack(pady=10)
         entry.focus_set()
