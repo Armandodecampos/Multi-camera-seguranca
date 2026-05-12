@@ -262,6 +262,8 @@ class CentralMonitoramento(ctk.CTk):
         self.arquivo_janela = os.path.join(user_dir, "config_janela_abi.json")
         self.arquivo_predefinicoes = os.path.join(user_dir, "predefinicoes_grid_abi.json")
         self.arquivo_ips = os.path.join(user_dir, "lista_ips_abi.json")
+        self.diretorio_prints = os.path.join(user_dir, "cameras_prints_abi")
+        os.makedirs(self.diretorio_prints, exist_ok=True)
 
         self.botoes_referencia = {}
         self.ip_selecionado = None
@@ -400,6 +402,10 @@ class CentralMonitoramento(ctk.CTk):
         self.btn_mais_opcoes = ctk.CTkButton(self.grid_frame, text="Mais Opções", width=100, height=35,
                                               fg_color=self.GRAY_DARK, hover_color=self.TEXT_S,
                                               corner_radius=0, command=self.abrir_menu_opcoes)
+
+        self.btn_screenshot = ctk.CTkButton(self.grid_frame, text="📷", width=40, height=35,
+                                             fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
+                                             corner_radius=0, command=self.tirar_screenshot)
 
         self.slot_frames = []
         self.slot_labels = []
@@ -662,6 +668,7 @@ class CentralMonitoramento(ctk.CTk):
                 handler.set_canal(self.obter_canal_alvo(ip))
         self.btn_expandir.lift()
         self.btn_mais_opcoes.lift()
+        self.btn_screenshot.lift()
 
     def ao_pressionar_slot(self, event, index):
         self.selecionar_slot(index)
@@ -731,6 +738,7 @@ class CentralMonitoramento(ctk.CTk):
         self.slot_maximized = None
         self.btn_expandir.lift()
         self.btn_mais_opcoes.lift()
+        self.btn_screenshot.lift()
 
     def selecionar_slot(self, index):
         if not (0 <= index < 20): return
@@ -763,12 +771,14 @@ class CentralMonitoramento(ctk.CTk):
             txt_exp = "Diminuir" if self.slot_maximized == index else "Aumentar"
             self.btn_expandir.configure(text=txt_exp)
 
-            # Ordem: Aumentar (Esquerda) | Mais Opções (Direita)
-            self.btn_expandir.place(in_=self.slot_frames[index], relx=1.0, rely=1.0, x=-115, y=-10, anchor="se")
+            # Ordem: Aumentar (Esquerda) | Print | Mais Opções (Direita)
+            self.btn_expandir.place(in_=self.slot_frames[index], relx=1.0, rely=1.0, x=-160, y=-10, anchor="se")
+            self.btn_screenshot.place(in_=self.slot_frames[index], relx=1.0, rely=1.0, x=-115, y=-10, anchor="se")
             self.btn_mais_opcoes.place(in_=self.slot_frames[index], relx=1.0, rely=1.0, x=-10, y=-10, anchor="se")
 
             self.btn_expandir.lift()
             self.btn_mais_opcoes.lift()
+            self.btn_screenshot.lift()
 
             # Sincroniza o seletor de IP
             self.sincronizar_seletor_com_ip(ip_novo)
@@ -777,6 +787,7 @@ class CentralMonitoramento(ctk.CTk):
             self.ip_selecionado = None
             self.btn_expandir.place_forget()
             self.btn_mais_opcoes.place_forget()
+            self.btn_screenshot.place_forget()
         self.atualizar_botoes_controle()
 
     def limpar_slot_atual(self):
@@ -795,6 +806,7 @@ class CentralMonitoramento(ctk.CTk):
         
         self.btn_expandir.place_forget()
         self.btn_mais_opcoes.place_forget()
+        self.btn_screenshot.place_forget()
         
         if self.slot_maximized == idx: self.restaurar_grid()
         self.selecionar_slot(idx)
@@ -825,8 +837,14 @@ class CentralMonitoramento(ctk.CTk):
     def atualizar_botoes_controle(self):
         if self.slot_maximized is not None:
             self.btn_expandir.configure(text="Diminuir", width=200, height=70, font=("Roboto", 16, "bold"))
+            self.btn_screenshot.configure(width=70, height=70, font=("Roboto", 24))
+            # Reposiciona quando maximizado
+            self.btn_expandir.place(in_=self.slot_frames[self.slot_maximized], relx=1.0, rely=1.0, x=-285, y=-10, anchor="se")
+            self.btn_screenshot.place(in_=self.slot_frames[self.slot_maximized], relx=1.0, rely=1.0, x=-215, y=-10, anchor="se")
+            self.btn_mais_opcoes.place(in_=self.slot_frames[self.slot_maximized], relx=1.0, rely=1.0, x=-10, y=-10, anchor="se")
         else:
             self.btn_expandir.configure(text="Aumentar", width=100, height=35, font=("Roboto", 12))
+            self.btn_screenshot.configure(width=40, height=35, font=("Roboto", 12))
 
     def toggle_grid_layout(self):
         if self.slot_maximized is not None: self.restaurar_grid()
@@ -868,6 +886,11 @@ class CentralMonitoramento(ctk.CTk):
                                     corner_radius=0, height=40,
                                     command=lambda: [modal.destroy(), self.alternar_edicao_nome()])
         btn_editar.pack(fill="x", padx=40, pady=5)
+
+        btn_print = ctk.CTkButton(modal, text="Tirar Print", fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
+                                   corner_radius=0, height=40,
+                                   command=lambda: [self.tirar_screenshot(ip), modal.destroy()])
+        btn_print.pack(fill="x", padx=40, pady=5)
 
         btn_fechar = ctk.CTkButton(modal, text="Fechar", fg_color="#444444", hover_color="#666666",
                                     corner_radius=0, height=40,
@@ -1510,10 +1533,21 @@ class CentralMonitoramento(ctk.CTk):
         self.botoes_referencia = {}
 
         for ip in self.obter_ips_ordenados():
+            lbl_thumb = None
             nome = self.dados_cameras.get(ip, f"IP {ip}")
             cor = self.ACCENT_WINE if ip == self.ip_selecionado else "transparent"
             frm = ctk.CTkFrame(self.scroll_frame, height=50, fg_color=cor, border_width=1, border_color=self.GRAY_DARK)
             frm.pack(fill="x", pady=2); frm.pack_propagate(False)
+
+            # Miniatura (Thumbnail)
+            caminho_print = os.path.join(self.diretorio_prints, f"{ip.replace('.', '_')}.png")
+            if os.path.exists(caminho_print):
+                try:
+                    img_pil = Image.open(caminho_print)
+                    img_ctk = ctk.CTkImage(img_pil, size=(50, 35))
+                    lbl_thumb = ctk.CTkLabel(frm, image=img_ctk, text="", width=50)
+                    lbl_thumb.pack(side="left", padx=2)
+                except: pass
 
             # Container para o texto (Label)
             txt_container = ctk.CTkFrame(frm, fg_color="transparent")
@@ -1530,7 +1564,11 @@ class CentralMonitoramento(ctk.CTk):
                                      command=lambda x=ip: self.confirmar_exclusao_camera_da_lista(x))
             btn_del.pack(side="right", padx=5)
 
-            for widget in [txt_container, lbl_nome, lbl_ip]:
+            widgets_para_bind = [txt_container, lbl_nome, lbl_ip]
+            if lbl_thumb:
+                widgets_para_bind.append(lbl_thumb)
+
+            for widget in widgets_para_bind:
                 widget.bind("<Button-1>", lambda e, x=ip: self.selecionar_camera(x))
                 widget.configure(cursor="hand2")
 
@@ -1723,6 +1761,26 @@ class CentralMonitoramento(ctk.CTk):
             lbl.bind("<Button-1>", lambda e, n=nome: self.aplicar_predefinicao(n))
 
             self.predefinicao_widgets[nome] = frm
+
+    # --- MÉTODOS DE SCREENSHOT ---
+    def tirar_screenshot(self, ip=None):
+        target_ip = ip if ip else self.ip_selecionado
+        if not target_ip or target_ip == "0.0.0.0":
+            return
+
+        handler = self.camera_handlers.get(target_ip)
+        if not handler or handler == "CONECTANDO":
+            return
+
+        frame = handler.pegar_frame()
+        if frame:
+            caminho = os.path.join(self.diretorio_prints, f"{target_ip.replace('.', '_')}.png")
+            try:
+                frame.save(caminho)
+                # print(f"LOG: Screenshot salva em {caminho}")
+                self.atualizar_lista_cameras_ui()
+            except Exception as e:
+                print(f"Erro ao salvar screenshot: {e}")
 
 if __name__ == "__main__":
     app = CentralMonitoramento()
