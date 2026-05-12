@@ -18,7 +18,7 @@ sem_conexao = threading.Semaphore(10)
 
 # --- CLASSE DE VÍDEO OTIMIZADA ---
 class CameraHandler:
-    def __init__(self, ip, canal=101, user="admin", password="password"):
+    def __init__(self, ip, canal=102, user="admin", password="password"):
         self.ip = ip
         self.canal = canal
         self.user = user
@@ -282,6 +282,7 @@ class CentralMonitoramento(ctk.CTk):
         self.tecla_pressionada = None
         self.ultima_predefinicao = None
         self.aba_ativa = "Câmeras"
+        self.forcar_baixa_qualidade = False
 
         self.carregar_posicao_janela()
         self.predefinicoes = self.carregar_predefinicoes()
@@ -324,6 +325,12 @@ class CentralMonitoramento(ctk.CTk):
 
         # Seletor de IP Manual
         self.criar_seletor_ip(tab_cams)
+
+        # Toggle de Baixa Qualidade
+        self.switch_baixa_qualidade = ctk.CTkSwitch(tab_cams, text="Forçar Baixa Qualidade",
+                                                   progress_color=self.ACCENT_RED,
+                                                   command=self.alternar_baixa_qualidade)
+        self.switch_baixa_qualidade.pack(pady=10)
 
         self.frame_busca = ctk.CTkFrame(tab_cams, fg_color="transparent")
         self.frame_busca.pack(fill="x", padx=5, pady=5)
@@ -619,8 +626,17 @@ class CentralMonitoramento(ctk.CTk):
         os._exit(0)
 
     def obter_canal_alvo(self, ip):
-        """Sempre utiliza o canal 101 (Melhor qualidade)."""
-        return 101
+        """Define se deve usar canal 101 (Main) ou 102 (Sub) baseado no estado do sistema."""
+        if self.forcar_baixa_qualidade:
+            return 102
+
+        # Se estiver maximizada, o IP maximizado usa 101
+        if self.slot_maximized is not None:
+            ip_max = self.grid_cameras[self.slot_maximized]
+            if ip == ip_max:
+                return 101
+
+        return 102
 
     def maximizar_slot(self, index):
         self.grid_frame.pack_configure(padx=0, pady=0)
@@ -789,7 +805,7 @@ class CentralMonitoramento(ctk.CTk):
     def alternar_todos_streams(self):
         for ip in set(self.grid_cameras):
             if ip and ip != "0.0.0.0" and ip not in self.camera_handlers:
-                self.iniciar_conexao_assincrona(ip, 101)
+                self.iniciar_conexao_assincrona(ip, 102)
 
     def atualizar_botoes_controle(self):
         # Decide qual slot deve conter os botões
@@ -1070,11 +1086,20 @@ class CentralMonitoramento(ctk.CTk):
         if nome and nome in self.predefinicao_widgets:
             self.predefinicao_widgets[nome].configure(fg_color=cor)
 
+    def alternar_baixa_qualidade(self):
+        self.forcar_baixa_qualidade = self.switch_baixa_qualidade.get()
+        # print(f"LOG: Baixa Qualidade {'ativada' if self.forcar_baixa_qualidade else 'desativada'}")
+
+        # Atualiza todos os handlers imediatamente
+        for ip, handler in self.camera_handlers.items():
+            if handler != "CONECTANDO":
+                handler.set_canal(self.obter_canal_alvo(ip))
+
     def trocar_qualidade(self, ip, novo_canal):
         if not ip: return
         handler = self.camera_handlers.get(ip)
         if handler and handler != "CONECTANDO":
-            if getattr(handler, 'canal', 101) != novo_canal:
+            if getattr(handler, 'canal', 102) != novo_canal:
                 handler.parar()
                 del self.camera_handlers[ip]
                 self.iniciar_conexao_assincrona(ip, novo_canal)
@@ -1084,7 +1109,7 @@ class CentralMonitoramento(ctk.CTk):
         if len(nome) > max_chars: return nome[:max_chars-3] + "..."
         return nome
 
-    def iniciar_conexao_assincrona(self, ip, canal=101):
+    def iniciar_conexao_assincrona(self, ip, canal=102):
         if not ip or ip == "0.0.0.0": return
         agora = time.time()
 
@@ -1218,6 +1243,9 @@ class CentralMonitoramento(ctk.CTk):
                     wf = int(max(10, wf - 6))
                     hf = int(max(10, hf - 6))
 
+                    # Se baixa qualidade ativada e não é prioridade, limita resolução
+                    if self.forcar_baixa_qualidade and i != self.slot_maximized:
+                        wf, hf = min(wf, 320), min(hf, 240)
 
                     # Só atualiza handler se o tamanho mudou (evita locks desnecessários)
                     if self.cache_ui_size[i] != (wf, hf):
