@@ -1673,6 +1673,20 @@ class CentralMonitoramento(ctk.CTk):
 
         self.filtrar_lista()
 
+        # Força o scroll frame a recalcular sua região interna para evitar cortes
+        # Realiza múltiplas tentativas para garantir que o layout foi processado
+        def fix_scroll():
+            try:
+                self.update_idletasks()
+                canvas = getattr(self.scroll_frame, "_parent_canvas", None) or getattr(self.scroll_frame, "_canvas", None)
+                if canvas:
+                    canvas.configure(scrollregion=canvas.bbox("all"))
+            except: pass
+
+        self.after(100, fix_scroll)
+        self.after(300, fix_scroll)
+        self.after(600, fix_scroll)
+
     # --- MÉTODOS DE PREDEFINIÇÕES ---
     def carregar_predefinicoes(self):
         if os.path.exists(self.arquivo_predefinicoes):
