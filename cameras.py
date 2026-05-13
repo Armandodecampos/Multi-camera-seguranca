@@ -222,6 +222,7 @@ class CentralMonitoramento(ctk.CTk):
     BG_MAIN = "#121212"
     BG_SIDEBAR = "#1A1A1A"
     BG_PANEL = "#1E1E1E"
+    BG_LIST = "#252525"
     ACCENT_RED = "#D32F2F"
     ACCENT_WINE = "#7B1010"
     TEXT_P = "#E0E0E0"
@@ -344,7 +345,7 @@ class CentralMonitoramento(ctk.CTk):
                                           command=lambda: self.solicitar_senha(self.abrir_modal_adicionar_camera))
         self.btn_add_cam.pack(side="right")
 
-        self.scroll_frame = ctk.CTkScrollableFrame(tab_cams, fg_color="transparent")
+        self.scroll_frame = ctk.CTkScrollableFrame(tab_cams, fg_color=self.BG_LIST)
         self.scroll_frame.pack(expand=True, fill="both", padx=0, pady=5)
 
         # Conteúdo da Sidebar (Predefinições)
@@ -355,7 +356,7 @@ class CentralMonitoramento(ctk.CTk):
         self.btn_salvar_predefinicao.pack(fill="x", padx=10, pady=10)
 
         ctk.CTkLabel(tab_predefinicoes, text="LISTA DE PREDEFINIÇÕES", font=("Roboto", 14, "bold"), text_color=self.TEXT_S).pack(pady=5)
-        self.scroll_predefinicoes = ctk.CTkScrollableFrame(tab_predefinicoes, fg_color="transparent")
+        self.scroll_predefinicoes = ctk.CTkScrollableFrame(tab_predefinicoes, fg_color=self.BG_LIST)
         self.scroll_predefinicoes.pack(expand=True, fill="both", padx=5, pady=5)
 
         # 2. Container Toggle Sidebar (Coluna 1)
@@ -751,7 +752,7 @@ class CentralMonitoramento(ctk.CTk):
 
         ip_novo = self.grid_cameras[index]
         if ip_novo and ip_novo != "0.0.0.0":
-            if ip_anterior and ip_anterior != ip_novo: self.pintar_botao(ip_anterior, "transparent")
+            if ip_anterior and ip_anterior != ip_novo: self.pintar_botao(ip_anterior, self.BG_SIDEBAR)
             self.ip_selecionado = ip_novo
             nome = self.dados_cameras.get(ip_novo, "")
             self.pintar_botao(ip_novo, self.ACCENT_WINE)
@@ -764,7 +765,7 @@ class CentralMonitoramento(ctk.CTk):
             # Sincroniza o seletor de IP
             self.sincronizar_seletor_com_ip(ip_novo)
         else:
-            if ip_anterior: self.pintar_botao(ip_anterior, "transparent")
+            if ip_anterior: self.pintar_botao(ip_anterior, self.BG_SIDEBAR)
             self.ip_selecionado = None
         self.atualizar_botoes_controle()
 
@@ -779,7 +780,7 @@ class CentralMonitoramento(ctk.CTk):
             self.ultima_predefinicao = None
 
         if self.ip_selecionado:
-            self.pintar_botao(self.ip_selecionado, "transparent")
+            self.pintar_botao(self.ip_selecionado, self.BG_SIDEBAR)
             self.ip_selecionado = None
         
         if self.slot_maximized == idx: self.restaurar_grid()
@@ -1593,8 +1594,8 @@ class CentralMonitoramento(ctk.CTk):
         for ip in self.obter_ips_ordenados():
             lbl_thumb = None
             nome = self.dados_cameras.get(ip, f"IP {ip}")
-            cor = self.ACCENT_WINE if ip == self.ip_selecionado else "transparent"
-            frm = ctk.CTkFrame(self.scroll_frame, fg_color=cor, border_width=1, border_color=self.GRAY_DARK)
+            cor = self.ACCENT_WINE if ip == self.ip_selecionado else self.BG_SIDEBAR
+            frm = ctk.CTkFrame(self.scroll_frame, fg_color=cor, border_width=0, border_color=self.GRAY_DARK)
             frm.pack(fill="x", pady=2)
 
             # Miniatura (Thumbnail)
@@ -1818,7 +1819,7 @@ class CentralMonitoramento(ctk.CTk):
 
         for nome in sorted(self.predefinicoes.keys(), key=str.lower):
             cor = self.ACCENT_WINE if nome == self.ultima_predefinicao else self.BG_SIDEBAR
-            frm = ctk.CTkFrame(self.scroll_predefinicoes, fg_color=cor, border_width=1, border_color=self.GRAY_DARK)
+            frm = ctk.CTkFrame(self.scroll_predefinicoes, fg_color=cor, border_width=0, border_color=self.GRAY_DARK)
             frm.pack(fill="x", pady=2, padx=2)
 
             # Bind no Frame para facilitar o clique
