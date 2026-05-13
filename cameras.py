@@ -877,7 +877,11 @@ class CentralMonitoramento(ctk.CTk):
             modal.geometry(f"+{x}+{y}")
         except: pass
 
-        ctk.CTkLabel(modal, text="CONFIGURAÇÕES", font=("Roboto", 18, "bold"), text_color=self.TEXT_P).pack(pady=(20, 20))
+        ctk.CTkLabel(modal, text="CONFIGURAÇÕES", font=("Roboto", 18, "bold"), text_color=self.TEXT_P).pack(pady=(20, 5))
+
+        # Info de quantidade de câmeras
+        total_cams = len(self.ips_unicos)
+        ctk.CTkLabel(modal, text=f"Total de câmeras na lista: {total_cams}", font=("Roboto", 12), text_color=self.TEXT_S).pack(pady=(0, 15))
 
         # Switch Baixa Qualidade
         def toggle_baixa_qualidade():
@@ -1666,6 +1670,8 @@ class CentralMonitoramento(ctk.CTk):
                 widget.configure(cursor="hand2")
 
             self.botoes_referencia[ip] = {'frame': frm, 'lbl_nome': lbl_nome, 'lbl_ip': lbl_ip}
+
+        self.filtrar_lista()
 
     # --- MÉTODOS DE PREDEFINIÇÕES ---
     def carregar_predefinicoes(self):
