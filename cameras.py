@@ -612,6 +612,8 @@ class CentralMonitoramento(ctk.CTk):
                     self.slot_selecionado = dados.get("slot_selecionado", 0)
                     self.forcar_baixa_qualidade = dados.get("forcar_baixa_qualidade", False)
                     self.tamanho_preview = dados.get("tamanho_preview", "Pequeno")
+                    if self.tamanho_preview == "Médio":
+                        self.tamanho_preview = "Grande"
             except Exception as e: print(f"Erro ao carregar janela: {e}")
 
     def ao_fechar(self):
@@ -904,7 +906,7 @@ class CentralMonitoramento(ctk.CTk):
             self.tamanho_preview = novo_tamanho
             self.atualizar_lista_cameras_ui()
 
-        seg_button = ctk.CTkSegmentedButton(modal, values=["Pequeno", "Médio", "Grande"],
+        seg_button = ctk.CTkSegmentedButton(modal, values=["Pequeno", "Grande"],
                                             command=mudar_tamanho,
                                             selected_color=self.ACCENT_RED,
                                             unselected_hover_color=self.ACCENT_WINE)
@@ -1612,10 +1614,6 @@ class CentralMonitoramento(ctk.CTk):
 
         # Configurações de tamanho baseadas na preferência
         if self.tamanho_preview == "Grande":
-            thumb_size = (300, 210)
-            pack_side = "top"
-            wrap_val = max(100, largura_sidebar - 40)
-        elif self.tamanho_preview == "Médio":
             thumb_size = (200, 140)
             pack_side = "top"
             wrap_val = max(100, largura_sidebar - 40)
