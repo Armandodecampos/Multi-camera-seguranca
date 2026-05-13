@@ -283,6 +283,7 @@ class CentralMonitoramento(ctk.CTk):
         self.ultima_predefinicao = None
         self.aba_ativa = "Câmeras"
         self.forcar_baixa_qualidade = False
+        self.tamanho_preview = "Pequeno"
 
         self.carregar_posicao_janela()
         self.predefinicoes = self.carregar_predefinicoes()
@@ -326,11 +327,11 @@ class CentralMonitoramento(ctk.CTk):
         # Seletor de IP Manual
         self.criar_seletor_ip(tab_cams)
 
-        # Toggle de Baixa Qualidade
-        self.switch_baixa_qualidade = ctk.CTkSwitch(tab_cams, text="Forçar Baixa Qualidade",
-                                                   progress_color=self.ACCENT_RED,
-                                                   command=self.alternar_baixa_qualidade)
-        self.switch_baixa_qualidade.pack(pady=10)
+        # Botão de Configurações
+        self.btn_config = ctk.CTkButton(tab_cams, text="⚙ Configurações",
+                                         fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
+                                         command=self.abrir_janela_configuracoes)
+        self.btn_config.pack(pady=10, padx=10, fill="x")
 
         self.frame_busca = ctk.CTkFrame(tab_cams, fg_color="transparent")
         self.frame_busca.pack(fill="x", padx=5, pady=5)
@@ -609,6 +610,8 @@ class CentralMonitoramento(ctk.CTk):
                     self.aba_ativa = dados.get("active_tab", "Câmeras")
                     self.ultima_predefinicao = dados.get("last_predefinicao") or dados.get("last_preset")
                     self.slot_selecionado = dados.get("slot_selecionado", 0)
+                    self.forcar_baixa_qualidade = dados.get("forcar_baixa_qualidade", False)
+                    self.tamanho_preview = dados.get("tamanho_preview", "Pequeno")
             except Exception as e: print(f"Erro ao carregar janela: {e}")
 
     def ao_fechar(self):
@@ -618,7 +621,9 @@ class CentralMonitoramento(ctk.CTk):
                     "geometry": self.geometry(),
                     "active_tab": self.tabview.get(),
                     "last_predefinicao": self.ultima_predefinicao,
-                    "slot_selecionado": self.slot_selecionado
+                    "slot_selecionado": self.slot_selecionado,
+                    "forcar_baixa_qualidade": self.forcar_baixa_qualidade,
+                    "tamanho_preview": self.tamanho_preview
                 }
                 with open(self.arquivo_janela, "w") as f: json.dump(dados, f)
         except Exception as e: print(f"Erro ao salvar janela: {e}")
@@ -857,6 +862,50 @@ class CentralMonitoramento(ctk.CTk):
     def toggle_grid_layout(self):
         if self.slot_maximized is not None: self.restaurar_grid()
         else: self.maximizar_slot(self.slot_selecionado)
+
+    def abrir_janela_configuracoes(self):
+        modal = ctk.CTkToplevel(self)
+        modal.title("Configurações")
+        modal.geometry("400x300")
+        modal.resizable(False, False)
+        modal.attributes("-topmost", True)
+
+        try:
+            self.update_idletasks()
+            x = self.winfo_x() + (self.winfo_width() // 2) - 200
+            y = self.winfo_y() + (self.winfo_height() // 2) - 150
+            modal.geometry(f"+{x}+{y}")
+        except: pass
+
+        ctk.CTkLabel(modal, text="CONFIGURAÇÕES", font=("Roboto", 18, "bold"), text_color=self.TEXT_P).pack(pady=(20, 20))
+
+        # Switch Baixa Qualidade
+        def toggle_baixa_qualidade():
+            self.forcar_baixa_qualidade = switch_bq.get()
+            self.alternar_baixa_qualidade()
+
+        switch_bq = ctk.CTkSwitch(modal, text="Forçar Baixa Qualidade",
+                                                   progress_color=self.ACCENT_RED,
+                                                   command=toggle_baixa_qualidade)
+        if self.forcar_baixa_qualidade:
+            switch_bq.select()
+        else:
+            switch_bq.deselect()
+        switch_bq.pack(pady=10)
+
+        # Segmented Button para Tamanho da Preview
+        ctk.CTkLabel(modal, text="Tamanho da previsualização:", font=("Roboto", 14), text_color=self.TEXT_S).pack(pady=(20, 5))
+
+        def mudar_tamanho(novo_tamanho):
+            self.tamanho_preview = novo_tamanho
+            self.atualizar_lista_cameras_ui()
+
+        seg_button = ctk.CTkSegmentedButton(modal, values=["Pequeno", "Médio", "Grande"],
+                                            command=mudar_tamanho,
+                                            selected_color=self.ACCENT_RED,
+                                            unselected_hover_color=self.ACCENT_WINE)
+        seg_button.set(self.tamanho_preview)
+        seg_button.pack(pady=10, padx=20, fill="x")
 
     def abrir_menu_opcoes(self):
         if not self.ip_selecionado: return
@@ -1097,7 +1146,6 @@ class CentralMonitoramento(ctk.CTk):
             self.predefinicao_widgets[nome].configure(fg_color=cor)
 
     def alternar_baixa_qualidade(self):
-        self.forcar_baixa_qualidade = self.switch_baixa_qualidade.get()
         # print(f"LOG: Baixa Qualidade {'ativada' if self.forcar_baixa_qualidade else 'desativada'}")
 
         # Atualiza todos os handlers imediatamente
@@ -1558,6 +1606,20 @@ class CentralMonitoramento(ctk.CTk):
         if largura_sidebar <= 1:
             largura_sidebar = 320
 
+        # Configurações de tamanho baseadas na preferência
+        if self.tamanho_preview == "Grande":
+            thumb_size = (300, 210)
+            pack_side = "top"
+            wrap_val = max(100, largura_sidebar - 40)
+        elif self.tamanho_preview == "Médio":
+            thumb_size = (200, 140)
+            pack_side = "top"
+            wrap_val = max(100, largura_sidebar - 40)
+        else: # Pequeno
+            thumb_size = (100, 70)
+            pack_side = "left"
+            wrap_val = max(100, largura_sidebar - 210)
+
         for ip in self.obter_ips_ordenados():
             lbl_thumb = None
             nome = self.dados_cameras.get(ip, f"IP {ip}")
@@ -1570,18 +1632,17 @@ class CentralMonitoramento(ctk.CTk):
             if os.path.exists(caminho_print):
                 try:
                     img_pil = Image.open(caminho_print)
-                    img_ctk = ctk.CTkImage(img_pil, size=(100, 70))
-                    lbl_thumb = ctk.CTkLabel(frm, image=img_ctk, text="", width=100)
-                    lbl_thumb.pack(side="left", padx=2)
+                    img_ctk = ctk.CTkImage(img_pil, size=thumb_size)
+                    lbl_thumb = ctk.CTkLabel(frm, image=img_ctk, text="", width=thumb_size[0])
+                    lbl_thumb.pack(side=pack_side, padx=2, pady=2)
                 except: pass
 
             # Container para o texto (Label)
             txt_container = ctk.CTkFrame(frm, fg_color="transparent")
-            txt_container.pack(side="left", fill="both", expand=True, pady=5)
+            txt_container.pack(side=pack_side, fill="both", expand=True, pady=5)
 
             # Cálculo aproximado de wraplength baseado na largura da sidebar
             # Reduzido para garantir que não corte e forçar o wrap mais cedo
-            wrap_val = max(100, largura_sidebar - 210)
             lbl_nome = ctk.CTkLabel(txt_container, text=nome, font=("Roboto", 12, "bold"),
                                     text_color=self.TEXT_P, anchor="w", justify="left",
                                     wraplength=wrap_val, width=wrap_val, height=0)
