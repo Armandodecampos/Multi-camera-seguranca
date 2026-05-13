@@ -282,7 +282,6 @@ class CentralMonitoramento(ctk.CTk):
         self.tecla_pressionada = None
         self.ultima_predefinicao = None
         self.aba_ativa = "Câmeras"
-        self.forcar_baixa_qualidade = False
         self.tamanho_preview = "Pequeno"
 
         self.carregar_posicao_janela()
@@ -610,7 +609,6 @@ class CentralMonitoramento(ctk.CTk):
                     self.aba_ativa = dados.get("active_tab", "Câmeras")
                     self.ultima_predefinicao = dados.get("last_predefinicao") or dados.get("last_preset")
                     self.slot_selecionado = dados.get("slot_selecionado", 0)
-                    self.forcar_baixa_qualidade = dados.get("forcar_baixa_qualidade", False)
                     self.tamanho_preview = dados.get("tamanho_preview", "Pequeno")
                     if self.tamanho_preview == "Médio":
                         self.tamanho_preview = "Grande"
@@ -624,7 +622,6 @@ class CentralMonitoramento(ctk.CTk):
                     "active_tab": self.tabview.get(),
                     "last_predefinicao": self.ultima_predefinicao,
                     "slot_selecionado": self.slot_selecionado,
-                    "forcar_baixa_qualidade": self.forcar_baixa_qualidade,
                     "tamanho_preview": self.tamanho_preview
                 }
                 with open(self.arquivo_janela, "w") as f: json.dump(dados, f)
@@ -634,9 +631,6 @@ class CentralMonitoramento(ctk.CTk):
 
     def obter_canal_alvo(self, ip):
         """Define se deve usar canal 101 (Main) ou 102 (Sub) baseado no estado do sistema."""
-        if self.forcar_baixa_qualidade:
-            return 102
-
         # Se estiver maximizada, o IP maximizado usa 101
         if self.slot_maximized is not None:
             ip_max = self.grid_cameras[self.slot_maximized]
@@ -884,20 +878,6 @@ class CentralMonitoramento(ctk.CTk):
         # Info de quantidade de câmeras
         total_cams = len(self.ips_unicos)
         ctk.CTkLabel(modal, text=f"Total de câmeras na lista: {total_cams}", font=("Roboto", 12), text_color=self.TEXT_S).pack(pady=(0, 15))
-
-        # Switch Baixa Qualidade
-        def toggle_baixa_qualidade():
-            self.forcar_baixa_qualidade = switch_bq.get()
-            self.alternar_baixa_qualidade()
-
-        switch_bq = ctk.CTkSwitch(modal, text="Forçar Baixa Qualidade",
-                                                   progress_color=self.ACCENT_RED,
-                                                   command=toggle_baixa_qualidade)
-        if self.forcar_baixa_qualidade:
-            switch_bq.select()
-        else:
-            switch_bq.deselect()
-        switch_bq.pack(pady=10)
 
         # Segmented Button para Tamanho da Preview
         ctk.CTkLabel(modal, text="Tamanho da previsualização:", font=("Roboto", 14), text_color=self.TEXT_S).pack(pady=(20, 5))
@@ -1151,14 +1131,6 @@ class CentralMonitoramento(ctk.CTk):
         if nome and nome in self.predefinicao_widgets:
             self.predefinicao_widgets[nome].configure(fg_color=cor)
 
-    def alternar_baixa_qualidade(self):
-        # print(f"LOG: Baixa Qualidade {'ativada' if self.forcar_baixa_qualidade else 'desativada'}")
-
-        # Atualiza todos os handlers imediatamente
-        for ip, handler in self.camera_handlers.items():
-            if handler != "CONECTANDO":
-                handler.set_canal(self.obter_canal_alvo(ip))
-
     def trocar_qualidade(self, ip, novo_canal):
         if not ip: return
         handler = self.camera_handlers.get(ip)
@@ -1306,10 +1278,6 @@ class CentralMonitoramento(ctk.CTk):
                     hf = self.slot_frames[i].winfo_height()
                     wf = int(max(10, wf - 6))
                     hf = int(max(10, hf - 6))
-
-                    # Se baixa qualidade ativada e não é prioridade, limita resolução
-                    if self.forcar_baixa_qualidade and i != self.slot_maximized:
-                        wf, hf = min(wf, 320), min(hf, 240)
 
                     # Só atualiza handler se o tamanho mudou (evita locks desnecessários)
                     if self.cache_ui_size[i] != (wf, hf):
