@@ -877,41 +877,45 @@ class CentralMonitoramento(ctk.CTk):
             return
 
         target_frm = self.slot_frames[idx]
+        cw = target_frm.winfo_width()
+        if cw <= 1: cw = 240 # Fallback inicial
+
         handler = self.camera_handlers.get(ip_atual)
+        is_rec = handler and handler != "CONECTANDO" and handler.gravando
 
-        if handler and handler != "CONECTANDO" and handler.gravando:
-            self.btn_gravar.configure(text="Finalizar", fg_color=self.ACCENT_RED)
-        else:
-            self.btn_gravar.configure(text="Gravar", fg_color=self.GRAY_DARK)
-
+        # Lógica de Responsividade (Tamanho e Texto)
         if self.slot_maximized is not None:
-            # Estado Maximizado
             h, spc = 70, 10
             w_opt, w_rec, w_exp = 180, 180, 250
             f_main = ("Roboto", 16, "bold")
-
-            self.btn_expandir.configure(text="Diminuir", width=w_exp, height=h, font=f_main)
-            self.btn_gravar.configure(width=w_rec, height=h, font=f_main)
-            self.btn_mais_opcoes.configure(width=w_opt, height=h, font=f_main)
-
-            # Offsets (anchor="se")
-            x_opt = -10
-            x_rec = x_opt - w_opt - spc
-            x_exp = x_rec - w_rec - spc
+            txt_exp = "Diminuir"
+            txt_rec = "Finalizar" if is_rec else "Gravar"
+            txt_opt = "Mais Opções"
         else:
-            # Estado Normal
-            h, spc = 35, 5
-            w_opt, w_rec, w_exp = 100, 100, 120
-            f_main = ("Roboto", 12)
+            h = 35
+            f_main = ("Roboto", 11)
+            if cw < 200:
+                spc = 2
+                w_opt, w_rec, w_exp = 35, 35, 35
+                txt_opt, txt_rec, txt_exp = "...", "■" if is_rec else "●", "▲"
+            elif cw < 320:
+                spc = 4
+                w_opt, w_rec, w_exp = 65, 65, 75
+                txt_opt, txt_rec, txt_exp = "Opt", "Fim" if is_rec else "Rec", "Aum."
+            else:
+                spc = 8
+                w_opt, w_rec, w_exp = 100, 90, 110
+                txt_opt, txt_rec, txt_exp = "Opções", "Finalizar" if is_rec else "Gravar", "Aumentar"
 
-            self.btn_expandir.configure(text="Aumentar", width=w_exp, height=h, font=f_main)
-            self.btn_gravar.configure(width=w_rec, height=h, font=f_main)
-            self.btn_mais_opcoes.configure(width=w_opt, height=h, font=f_main)
+        self.btn_gravar.configure(text=txt_rec, fg_color=self.ACCENT_RED if is_rec else self.GRAY_DARK)
+        self.btn_expandir.configure(text=txt_exp, width=w_exp, height=h, font=f_main)
+        self.btn_gravar.configure(width=w_rec, height=h, font=f_main)
+        self.btn_mais_opcoes.configure(text=txt_opt, width=w_opt, height=h, font=f_main)
 
-            # Offsets
-            x_opt = -10
-            x_rec = x_opt - w_opt - spc
-            x_exp = x_rec - w_rec - spc
+        # Offsets (anchor="se")
+        x_opt = -10
+        x_rec = x_opt - w_opt - spc
+        x_exp = x_rec - w_rec - spc
 
         # Aplica posicionamento
         self.btn_mais_opcoes.place(in_=target_frm, relx=1.0, rely=1.0, x=x_opt, y=-10, anchor="se")
@@ -949,13 +953,13 @@ class CentralMonitoramento(ctk.CTk):
                 filepath = os.path.join(downloads_dir, filename)
 
                 handler.iniciar_gravacao(filepath)
-                self.btn_gravar.configure(text="Finalizar", fg_color=self.ACCENT_RED)
+                self.atualizar_botoes_controle()
             except Exception as e:
                 self.abrir_modal_alerta("Erro", f"Não foi possível iniciar a gravação: {e}")
         else:
             # Parar Gravação
             handler.parar_gravacao()
-            self.btn_gravar.configure(text="Gravar", fg_color=self.GRAY_DARK)
+            self.atualizar_botoes_controle()
             self.abrir_modal_alerta("Sucesso", "Gravação finalizada e salva em Downloads.")
 
     def abrir_janela_configuracoes(self):
@@ -1308,16 +1312,8 @@ class CentralMonitoramento(ctk.CTk):
 
     def loop_exibicao(self):
         try:
-            # Atualiza botão de gravação conforme o estado do handler selecionado
-            if self.ip_selecionado:
-                h_sel = self.camera_handlers.get(self.ip_selecionado)
-                if h_sel and h_sel != "CONECTANDO":
-                    if h_sel.gravando:
-                        if self.btn_gravar.cget("text") != "Finalizar":
-                            self.btn_gravar.configure(text="Finalizar", fg_color=self.ACCENT_RED)
-                    else:
-                        if self.btn_gravar.cget("text") != "Gravar":
-                            self.btn_gravar.configure(text="Gravar", fg_color=self.GRAY_DARK)
+            # Atualiza botões de controle periodicamente para garantir responsividade e sincronia
+            self.atualizar_botoes_controle()
 
             # Processa novas conexões
             while not self.fila_conexoes.empty():
