@@ -1049,7 +1049,7 @@ class CentralMonitoramento(ctk.CTk):
         # Cria a janela modal
         modal = ctk.CTkToplevel(self)
         modal.title(f"Opções - {ip}")
-        modal.geometry("400x420")
+        modal.geometry("400x330")
         modal.resizable(False, False)
         modal.attributes("-topmost", True)
 
@@ -1057,7 +1057,7 @@ class CentralMonitoramento(ctk.CTk):
         try:
             self.update_idletasks()
             x = self.winfo_x() + (self.winfo_width() // 2) - 200
-            y = self.winfo_y() + (self.winfo_height() // 2) - 210
+            y = self.winfo_y() + (self.winfo_height() // 2) - 165
             modal.geometry(f"+{x}+{y}")
         except: pass
 
@@ -1070,18 +1070,6 @@ class CentralMonitoramento(ctk.CTk):
                                     corner_radius=0, height=40,
                                     command=lambda: [modal.destroy(), self.alternar_edicao_nome()])
         btn_renomear.pack(fill="x", padx=40, pady=5)
-
-        btn_capturar = ctk.CTkButton(modal, text="Capturar imagem", fg_color=self.GRAY_DARK, hover_color=self.TEXT_S,
-                                    corner_radius=0, height=40,
-                                    command=lambda: [modal.destroy(), self.capturar_imagem()])
-        btn_capturar.pack(fill="x", padx=40, pady=5)
-
-        handler = self.camera_handlers.get(ip)
-        texto_gravacao = "Finalizar gravação" if (handler and handler != "CONECTANDO" and handler.gravando) else "Gravar vídeo"
-        btn_toggle_rec = ctk.CTkButton(modal, text=texto_gravacao, fg_color=self.GRAY_DARK, hover_color=self.TEXT_S,
-                                    corner_radius=0, height=40,
-                                    command=lambda: [modal.destroy(), self.toggle_gravacao()])
-        btn_toggle_rec.pack(fill="x", padx=40, pady=5)
 
         btn_desabilitar = ctk.CTkButton(modal, text="Desabilitar", fg_color=self.GRAY_DARK, hover_color=self.TEXT_S,
                                     corner_radius=0, height=40,
