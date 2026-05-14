@@ -1,5 +1,6 @@
 import cv2
 import customtkinter as ctk
+import tkinter as tk
 from PIL import Image, ImageTk
 import json
 import os
@@ -18,81 +19,88 @@ sem_conexao = threading.Semaphore(10)
 
 # --- CLASSE TOOLTIP ---
 class ToolTip:
-    _active_tooltip = None
+    _active_window = None
 
     def __init__(self, widget, text):
         self.widget = widget
         self.text = text
-        self.tooltip_window = None
         self.wait_id = None
         self.widget.bind("<Enter>", self.schedule_tooltip)
         self.widget.bind("<Leave>", self.hide_tooltip)
         self.widget.bind("<Button-1>", self.hide_tooltip)
 
     def schedule_tooltip(self, event=None):
-        self.hide_tooltip()
+        self.cancel_wait()
         if self.text:
-            # Cancela qualquer tooltip ativo antes de agendar novo
-            if ToolTip._active_tooltip:
-                ToolTip._active_tooltip.hide_tooltip()
             self.wait_id = self.widget.after(400, self.show_tooltip)
+
+    def cancel_wait(self):
+        if self.wait_id:
+            try: self.widget.after_cancel(self.wait_id)
+            except: pass
+            self.wait_id = None
 
     def show_tooltip(self):
         if not self.text:
             return
 
-        # Se já houver um ativo, fecha
-        if ToolTip._active_tooltip:
-            ToolTip._active_tooltip.hide_tooltip()
+        # Fecha qualquer tooltip ativo antes de mostrar um novo
+        ToolTip.hide_active_tooltip()
 
-        ToolTip._active_tooltip = self
-
-        # Posiciona centralizado abaixo do widget
-        self.tooltip_window = tw = ctk.CTkToplevel()
+        # Usamos tk.Toplevel por ser mais leve e estável para overlays rápidos
+        tw = tk.Toplevel(self.widget)
         tw.wm_overrideredirect(True)
         tw.attributes("-topmost", True)
+        tw.configure(bg="#2B2B2B")
 
-        label = ctk.CTkLabel(tw, text=self.text, justify='left',
-                             fg_color="#2B2B2B", text_color="white",
-                             corner_radius=5, padx=8, pady=4,
-                             font=("Roboto", 11))
+        ToolTip._active_window = tw
+
+        # Usamos Label padrão do tkinter para evitar o overhead do CustomTkinter em janelas efêmeras
+        label = tk.Label(tw, text=self.text, justify='left',
+                         bg="#2B2B2B", fg="white",
+                         padx=8, pady=4,
+                         font=("Roboto", 11))
         label.pack()
 
-        # Força atualização para pegar o tamanho real
+        # Garante que as dimensões requisitadas sejam processadas
         tw.update_idletasks()
-        tw_w = tw.winfo_width()
-        tw_h = tw.winfo_height()
+        tw_w = tw.winfo_reqwidth()
+        tw_h = tw.winfo_reqheight()
 
         try:
+            # Posição absoluta do widget pai na tela
             wx = self.widget.winfo_rootx()
             wy = self.widget.winfo_rooty()
             ww = self.widget.winfo_width()
             wh = self.widget.winfo_height()
 
+            # Centraliza horizontalmente sob o botão
             x = wx + (ww // 2) - (tw_w // 2)
             y = wy + wh + 5
 
-            # Garantia mínima de que não saia da tela à esquerda
+            # Ajuste de borda de tela
+            screen_w = tw.winfo_screenwidth()
+            if x + tw_w > screen_w: x = screen_w - tw_w - 10
             x = max(10, x)
 
-            tw.wm_geometry(f"+{int(x)}+{int(y)}")
-        except:
+            tw.wm_geometry(f"{tw_w}x{tw_h}+{int(x)}+{int(y)}")
+        except Exception as e:
+            print(f"Erro ao posicionar ToolTip: {e}")
             tw.destroy()
-            self.tooltip_window = None
+            ToolTip._active_window = None
 
-    def hide_tooltip(self, event=None):
-        if self.wait_id:
-            try: self.widget.after_cancel(self.wait_id)
-            except: pass
-            self.wait_id = None
-        if self.tooltip_window:
+    @classmethod
+    def hide_active_tooltip(cls):
+        if cls._active_window:
             try:
-                self.tooltip_window.destroy()
+                cls._active_window.destroy()
             except:
                 pass
-            self.tooltip_window = None
-        if ToolTip._active_tooltip == self:
-            ToolTip._active_tooltip = None
+            cls._active_window = None
+
+    def hide_tooltip(self, event=None):
+        self.cancel_wait()
+        ToolTip.hide_active_tooltip()
 
     def update_text(self, new_text):
         self.text = new_text
@@ -287,17 +295,18 @@ class CameraHandler:
                         frame_res = frame
 
                     # Adiciona Nome e IP para debug visual apenas se houver espaço e estiver habilitado
-                    if h > 50 and self.exibir_info:
-                        # Nome da Câmera (Superior Esquerda)
-                        if self.nome_display:
-                            cv2.putText(frame_res, self.nome_display, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 2)
-                            cv2.putText(frame_res, self.nome_display, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
+                    if h > 50:
+                        if self.exibir_info:
+                            # Nome da Câmera (Superior Esquerda)
+                            if self.nome_display:
+                                cv2.putText(frame_res, self.nome_display, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 2)
+                                cv2.putText(frame_res, self.nome_display, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
 
-                        # IP da Câmera (Linha abaixo)
-                        cv2.putText(frame_res, self.ip_display, (10, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 2)
-                        cv2.putText(frame_res, self.ip_display, (10, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
+                            # IP da Câmera (Linha abaixo)
+                            cv2.putText(frame_res, self.ip_display, (10, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 2)
+                            cv2.putText(frame_res, self.ip_display, (10, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
 
-                        # Indicador de Gravação
+                        # Indicador de Gravação (Sempre visível se estiver gravando)
                         if self.gravando:
                             elapsed = time.time() - self.tempo_inicio_gravacao
                             mins, secs = divmod(int(elapsed), 60)
@@ -318,8 +327,10 @@ class CameraHandler:
                             else:
                                 tx, ty = w - tw_text - 10, 25
 
-                            cv2.putText(frame_res, timer_txt, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 2)
-                            cv2.putText(frame_res, timer_txt, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 1)
+                            # Adiciona fundo semi-transparente para melhor legibilidade
+                            cv2.rectangle(frame_res, (tx - 5, ty - th_text - 5), (tx + tw_text + 5, ty + baseline + 5), (0,0,0), -1)
+                            cv2.putText(frame_res, timer_txt, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 2) # Borda branca
+                            cv2.putText(frame_res, timer_txt, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 1) # Texto vermelho
 
                     rgb = cv2.cvtColor(frame_res, cv2.COLOR_BGR2RGB)
                     pil_img = Image.fromarray(rgb)
