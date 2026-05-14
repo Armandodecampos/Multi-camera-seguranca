@@ -10,11 +10,11 @@ import queue
 import requests
 from requests.auth import HTTPDigestAuth
 # Configuração de baixa latência para OpenCV/FFMPEG
-os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp;stimeout;5000000;buffer_size;2048000;analyzeduration;100000;probesize;100000;fflags;discardcorrupt;max_delay;500000;reorder_queue_size;16;rtsp_flags;prefer_tcp;reconnect;1;reconnect_streamed;1;reconnect_at_eof;1"
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp;stimeout;3000000;buffer_size;2048000;analyzeduration;50000;probesize;50000;fflags;discardcorrupt;max_delay;500000;reorder_queue_size;16;rtsp_flags;prefer_tcp;reconnect;1;reconnect_streamed;1;reconnect_at_eof;1;allowed_media_types;video"
 cv2.setNumThreads(1)
 
 # Semáforo global para limitar conexões simultâneas (evita travamentos)
-sem_conexao = threading.Semaphore(10)
+sem_conexao = threading.Semaphore(20)
 
 # --- CLASSE DE VÍDEO OTIMIZADA ---
 class CameraHandler:
@@ -43,6 +43,7 @@ class CameraHandler:
         self.caminho_video = None
         self.tempo_inicio_gravacao = 0
         self.timeout_atingido = False
+        self.ativo = True
 
     def verificar_alcance(self, timeout=1.0):
         """Verifica se o IP e a porta RTSP (554) estão acessíveis."""
@@ -168,6 +169,11 @@ class CameraHandler:
                 if self.novo_frame and not self.prioridade and not self.gravando:
                     if now - last_process_time < 0.2:
                         continue
+
+                # Se a câmera não estiver ativa (visível), pulamos a decodificação e processamento pesado
+                # Exceto se estiver gravando, pois precisamos do frame decodificado para o VideoWriter
+                if not self.ativo and not self.gravando:
+                    continue
 
                 # Retrieve frame (decodifica)
                 ret_ret, frame = self.cap.retrieve()
@@ -534,6 +540,8 @@ class CentralMonitoramento(ctk.CTk):
             self.after(500, lambda: self.aplicar_predefinicao(self.ultima_predefinicao))
 
         self.last_button_state = None
+        self._window_scaling = self._get_window_scaling()
+        self._loop_counter = 0
         self.loop_exibicao()
 
     def _iniciar_sistema_conexoes(self):
@@ -560,17 +568,11 @@ class CentralMonitoramento(ctk.CTk):
                     if handler and handler != "CONECTANDO" and getattr(handler, 'rodando', False):
                         continue
 
-                    # Se o estado for "CONECTANDO" mas não tivermos o objeto,
-                    # significa que este item da fila é o que deve iniciar a thread.
-                    # Mas se por algum motivo já houver uma thread, evitamos duplicar.
-                    # (Embora ips_em_fila já ajude a evitar duplicados na fila)
-
                     # Inicia a conexão real
-                    # print(f"LOG: Iniciando thread de conexão para {ip} (Queue size: {self.fila_pendente_conexoes.qsize()})")
                     threading.Thread(target=self._thread_conectar, args=(ip, canal), daemon=True).start()
 
-                    # Pausa maior para evitar picos de CPU/Rede durante trocas de predefinicoes
-                    time.sleep(0.05)
+                    # Pausa menor para acelerar conexões sequenciais
+                    time.sleep(0.02)
                 else:
                     time.sleep(0.02)
             except Exception as e:
@@ -1354,6 +1356,17 @@ class CentralMonitoramento(ctk.CTk):
 
     def loop_exibicao(self):
         try:
+            # Atualiza o scaling da janela a cada 50 loops (aprox 1.5s) para economizar chamadas
+            self._loop_counter += 1
+            if self._loop_counter >= 50:
+                self._window_scaling = self._get_window_scaling()
+                self._loop_counter = 0
+
+            # Se a janela estiver minimizada, pula processamento pesado
+            if self.state() == "iconic":
+                self.after(500, self.loop_exibicao)
+                return
+
             # Atualiza botões de controle periodicamente para garantir responsividade e sincronia
             self.atualizar_botoes_controle()
 
@@ -1370,11 +1383,19 @@ class CentralMonitoramento(ctk.CTk):
                 except: pass
 
             agora = time.time()
-            scaling = self._get_window_scaling()
+            scaling = self._window_scaling
             indices_trabalho = [self.slot_maximized] if self.slot_maximized is not None else range(20)
 
             # Mapeia quais IPs estão sendo processados para compartilhar frames se possível (IP -> PIL Image)
             current_ips_pil = {}
+
+            # Gestão de Atividade dos Handlers
+            for h in self.camera_handlers.values():
+                if h != "CONECTANDO": h.ativo = False
+            for idx in indices_trabalho:
+                ip_work = self.grid_cameras[idx]
+                h_work = self.camera_handlers.get(ip_work)
+                if h_work and h_work != "CONECTANDO": h_work.ativo = True
 
             for i in range(20):
                 ip = self.grid_cameras[i]
@@ -1490,8 +1511,8 @@ class CentralMonitoramento(ctk.CTk):
                     pass
 
 
-        except Exception as e: print(f"Erro no loop de exibição: {e}")
-        finally: self.after(50, self.loop_exibicao) # Ajustado para 50ms para equilibrar fluidez e CPU
+        except Exception as e: print(f"Erro no loop de exibicao: {e}")
+        finally: self.after(30, self.loop_exibicao) # Reduzido para 30ms para maior fluidez
 
     def filtrar_lista(self):
         termo = self.entry_busca.get().lower()
@@ -1866,7 +1887,7 @@ class CentralMonitoramento(ctk.CTk):
         predefinicao = self.predefinicoes.get(nome)
         if not predefinicao: return
 
-        # Limpa o cooldown para permitir reconexão imediata se for um predefinicao
+        # Limpa o cooldown para permitir reconexão imediata se for uma predefinicao
         self.cooldown_conexoes.clear()
 
         # Gerencia cores na lista de predefinicoes
@@ -1875,39 +1896,43 @@ class CentralMonitoramento(ctk.CTk):
         self.ultima_predefinicao = nome
         self.pintar_predefinicao(nome, self.ACCENT_WINE)
 
-        # print(f"Aplicando predefinição: {nome}")
+        # 1. Identifica quais IPs devem ser mantidos e quais devem ser fechados
+        ips_novos_set = set(ip for ip in predefinicao if ip and ip != "0.0.0.0")
 
-        # 1. Fecha TODAS as conexões atuais para começar do zero (conforme solicitado pelo usuário)
         for ip_h in list(self.camera_handlers.keys()):
-            h = self.camera_handlers[ip_h]
-            if h != "CONECTANDO":
-                try: h.parar()
-                except: pass
-            del self.camera_handlers[ip_h]
+            if ip_h not in ips_novos_set:
+                h = self.camera_handlers[ip_h]
+                if h != "CONECTANDO":
+                    try: h.parar()
+                    except: pass
+                del self.camera_handlers[ip_h]
 
-        # 2. Limpa filas e estados de conexão
+        # 2. Limpa filas e estados de conexão pendente
         while not self.fila_pendente_conexoes.empty():
             try: self.fila_pendente_conexoes.get_nowait()
             except: pass
         self.ips_em_fila.clear()
 
+        # Reconstrói ips_em_fila com o que sobrou em camera_handlers como "CONECTANDO"
+        for ip, status in self.camera_handlers.items():
+            if status == "CONECTANDO":
+                self.ips_em_fila.add(ip)
+
         # 3. Atualiza os dados do grid primeiro (silenciosamente)
-        novos_ips = ["0.0.0.0"] * 20
-        ips_novos_set = set()
         for i in range(20):
             ip = predefinicao[i] if i < len(predefinicao) else "0.0.0.0"
-            novos_ips[i] = ip
-            if ip and ip != "0.0.0.0":
-                ips_novos_set.add(ip)
-
-            # Atualiza visualmente cada slot de forma segura
             self.atribuir_ip_ao_slot(i, ip, atualizar_ui=False, gerenciar_conexoes=False, salvar=False, forcado=True)
 
         self.salvar_grid()
 
-        # 4. Inicia conexões para os novos IPs (o staggered cuidará do resto)
+        # 4. Inicia conexões para os novos IPs que ainda não estão no handler
         for ip in ips_novos_set:
-            self.iniciar_conexao_assincrona(ip, self.obter_canal_alvo(ip))
+            if ip not in self.camera_handlers:
+                self.iniciar_conexao_assincrona(ip, self.obter_canal_alvo(ip))
+            else:
+                h = self.camera_handlers[ip]
+                if h != "CONECTANDO":
+                    h.set_canal(self.obter_canal_alvo(ip))
 
         # 5. Restaura layout se necessário e seleciona slot
         if self.slot_maximized is not None:
@@ -1915,7 +1940,6 @@ class CentralMonitoramento(ctk.CTk):
 
         self.selecionar_slot(self.slot_selecionado)
         self.update_idletasks()
-        # print(f"Predefinição '{nome}' aplicada!")
 
     def sobrescrever_predefinicao(self, nome):
         self.abrir_modal_confirmacao("Confirmar", f"Deseja sobrescrever o predefinição '{nome}' com a configuração atual?",
