@@ -38,6 +38,9 @@ class CameraHandler:
         self.prioridade = False
         self.necessita_reconexao = False
         self.ultimo_erro = None
+        self.gravando = False
+        self.video_writer = None
+        self.caminho_video = None
 
     def verificar_alcance(self, timeout=1.0):
         """Verifica se o IP e a porta RTSP (554) estão acessíveis."""
@@ -67,6 +70,19 @@ class CameraHandler:
                 self.canal = novo_canal
                 self.url = self._gerar_url(self.ip, novo_canal)
                 self.necessita_reconexao = True
+
+    def iniciar_gravacao(self, filepath):
+        with self.lock:
+            self.caminho_video = filepath
+            self.gravando = True
+            print(f"Gravação iniciada: {filepath}")
+
+    def parar_gravacao(self):
+        with self.lock:
+            if self.gravando:
+                self.gravando = False
+                # O video_writer será fechado pelo loop_leitura para evitar race conditions
+                print(f"Sinalizando fim de gravação.")
 
     def iniciar(self):
         try:
@@ -138,14 +154,14 @@ class CameraHandler:
                 consecutive_failures = 0
                 now = time.time()
 
-                # Controle de FPS Dinâmico (Reduzido para 7 em background para economizar CPU/Rede mas manter fluidez)
-                target_fps = 25 if self.prioridade else 7
+                # Controle de FPS Dinâmico
+                target_fps = 25 if (self.prioridade or self.gravando) else 7
                 if now - last_process_time < (1.0 / target_fps):
                     continue
 
                 # Se a UI ainda não consumiu o frame anterior, e não é prioridade, podemos pular
-                # Mas forçamos a atualização se passou muito tempo (0.2s) para evitar congelamentos
-                if self.novo_frame and not self.prioridade:
+                # Se estiver gravando, não pulamos a decodificação
+                if self.novo_frame and not self.prioridade and not self.gravando:
                     if now - last_process_time < 0.2:
                         continue
 
@@ -155,6 +171,26 @@ class CameraHandler:
                     continue
 
                 last_process_time = now
+
+                # Lógica de Gravação
+                if self.gravando:
+                    if self.video_writer is None:
+                        try:
+                            h, w = frame.shape[:2]
+                            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                            self.video_writer = cv2.VideoWriter(self.caminho_video, fourcc, 25.0, (w, h))
+                        except Exception as e:
+                            print(f"Erro ao iniciar VideoWriter: {e}")
+                            self.gravando = False
+
+                    if self.video_writer is not None:
+                        self.video_writer.write(frame)
+                else:
+                    # Se não estiver mais gravando mas o writer ainda existir, fecha-o
+                    if self.video_writer is not None:
+                        self.video_writer.release()
+                        self.video_writer = None
+                        print(f"Gravação finalizada no loop.")
 
                 try:
                     w, h = self.tamanho_alvo
@@ -175,6 +211,11 @@ class CameraHandler:
                         # IP da Câmera (Linha abaixo)
                         cv2.putText(frame_res, self.ip_display, (10, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 2)
                         cv2.putText(frame_res, self.ip_display, (10, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
+
+                        # Indicador de Gravação
+                        if self.gravando:
+                            cv2.putText(frame_res, "REC", (w - 50, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,0), 3)
+                            cv2.putText(frame_res, "REC", (w - 50, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,255), 2)
 
                     rgb = cv2.cvtColor(frame_res, cv2.COLOR_BGR2RGB)
                     pil_img = Image.fromarray(rgb)
@@ -199,6 +240,9 @@ class CameraHandler:
 
         if self.cap:
             self.cap.release()
+        if self.video_writer:
+            self.video_writer.release()
+            self.video_writer = None
         self.rodando = False
         self.conectado = False
 
@@ -209,6 +253,7 @@ class CameraHandler:
 
     def parar(self):
         self.rodando = False
+        self.parar_gravacao()
         self.conectado = False
 
 # --- INTERFACE PRINCIPAL ---
@@ -400,6 +445,10 @@ class CentralMonitoramento(ctk.CTk):
         self.btn_expandir = ctk.CTkButton(self.grid_frame, text="Aumentar", width=100, height=35,
                                            fg_color=self.ACCENT_RED, hover_color=self.ACCENT_WINE,
                                            corner_radius=0, command=self.toggle_grid_layout)
+
+        self.btn_gravar = ctk.CTkButton(self.grid_frame, text="Gravar", width=100, height=35,
+                                         fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
+                                         corner_radius=0, command=self.toggle_gravacao)
 
         self.btn_mais_opcoes = ctk.CTkButton(self.grid_frame, text="Mais Opções", width=100, height=35,
                                               fg_color=self.GRAY_DARK, hover_color=self.TEXT_S,
@@ -616,6 +665,11 @@ class CentralMonitoramento(ctk.CTk):
             except Exception as e: print(f"Erro ao carregar janela: {e}")
 
     def ao_fechar(self):
+        # Para todas as gravações ativas
+        for h in self.camera_handlers.values():
+            if h != "CONECTANDO":
+                h.parar_gravacao()
+
         try:
             if not self.em_tela_cheia:
                 dados = {
@@ -818,47 +872,91 @@ class CentralMonitoramento(ctk.CTk):
 
         if not ip_atual or ip_atual == "0.0.0.0":
             self.btn_expandir.place_forget()
+            self.btn_gravar.place_forget()
             self.btn_mais_opcoes.place_forget()
             return
 
         target_frm = self.slot_frames[idx]
+        handler = self.camera_handlers.get(ip_atual)
+
+        if handler and handler != "CONECTANDO" and handler.gravando:
+            self.btn_gravar.configure(text="Finalizar", fg_color=self.ACCENT_RED)
+        else:
+            self.btn_gravar.configure(text="Gravar", fg_color=self.GRAY_DARK)
 
         if self.slot_maximized is not None:
             # Estado Maximizado
             h, spc = 70, 10
-            w_opt, w_exp = 180, 250
+            w_opt, w_rec, w_exp = 180, 180, 250
             f_main = ("Roboto", 16, "bold")
 
             self.btn_expandir.configure(text="Diminuir", width=w_exp, height=h, font=f_main)
+            self.btn_gravar.configure(width=w_rec, height=h, font=f_main)
             self.btn_mais_opcoes.configure(width=w_opt, height=h, font=f_main)
 
             # Offsets (anchor="se")
             x_opt = -10
-            x_exp = x_opt - w_opt - spc
+            x_rec = x_opt - w_opt - spc
+            x_exp = x_rec - w_rec - spc
         else:
             # Estado Normal
             h, spc = 35, 5
-            w_opt, w_exp = 100, 120
+            w_opt, w_rec, w_exp = 100, 100, 120
             f_main = ("Roboto", 12)
 
             self.btn_expandir.configure(text="Aumentar", width=w_exp, height=h, font=f_main)
+            self.btn_gravar.configure(width=w_rec, height=h, font=f_main)
             self.btn_mais_opcoes.configure(width=w_opt, height=h, font=f_main)
 
             # Offsets
             x_opt = -10
-            x_exp = x_opt - w_opt - spc
+            x_rec = x_opt - w_opt - spc
+            x_exp = x_rec - w_rec - spc
 
         # Aplica posicionamento
         self.btn_mais_opcoes.place(in_=target_frm, relx=1.0, rely=1.0, x=x_opt, y=-10, anchor="se")
+        self.btn_gravar.place(in_=target_frm, relx=1.0, rely=1.0, x=x_rec, y=-10, anchor="se")
         self.btn_expandir.place(in_=target_frm, relx=1.0, rely=1.0, x=x_exp, y=-10, anchor="se")
 
         # Garante que fiquem no topo
         self.btn_expandir.lift()
+        self.btn_gravar.lift()
         self.btn_mais_opcoes.lift()
 
     def toggle_grid_layout(self):
         if self.slot_maximized is not None: self.restaurar_grid()
         else: self.maximizar_slot(self.slot_selecionado)
+
+    def toggle_gravacao(self):
+        if not self.ip_selecionado:
+            self.abrir_modal_alerta("Aviso", "Nenhuma câmera selecionada.")
+            return
+
+        handler = self.camera_handlers.get(self.ip_selecionado)
+        if not handler or handler == "CONECTANDO" or not handler.conectado:
+            self.abrir_modal_alerta("Erro", "A câmera selecionada não está conectada.")
+            return
+
+        if not handler.gravando:
+            # Iniciar Gravação
+            try:
+                downloads_dir = os.path.join(os.path.expanduser("~"), "Downloads")
+                os.makedirs(downloads_dir, exist_ok=True)
+
+                ip_limpo = self.ip_selecionado.replace(".", "_")
+                timestamp = time.strftime("%Y%m%d_%H%M%S")
+                filename = f"gravacao_{ip_limpo}_{timestamp}.mp4"
+                filepath = os.path.join(downloads_dir, filename)
+
+                handler.iniciar_gravacao(filepath)
+                self.btn_gravar.configure(text="Finalizar", fg_color=self.ACCENT_RED)
+            except Exception as e:
+                self.abrir_modal_alerta("Erro", f"Não foi possível iniciar a gravação: {e}")
+        else:
+            # Parar Gravação
+            handler.parar_gravacao()
+            self.btn_gravar.configure(text="Gravar", fg_color=self.GRAY_DARK)
+            self.abrir_modal_alerta("Sucesso", "Gravação finalizada e salva em Downloads.")
 
     def abrir_janela_configuracoes(self):
         modal = ctk.CTkToplevel(self)
@@ -929,6 +1027,13 @@ class CentralMonitoramento(ctk.CTk):
                                     corner_radius=0, height=40,
                                     command=lambda: [modal.destroy(), self.capturar_imagem()])
         btn_capturar.pack(fill="x", padx=40, pady=5)
+
+        handler = self.camera_handlers.get(ip)
+        texto_gravacao = "Finalizar gravação" if (handler and handler != "CONECTANDO" and handler.gravando) else "Gravar vídeo"
+        btn_toggle_rec = ctk.CTkButton(modal, text=texto_gravacao, fg_color=self.GRAY_DARK, hover_color=self.TEXT_S,
+                                    corner_radius=0, height=40,
+                                    command=lambda: [modal.destroy(), self.toggle_gravacao()])
+        btn_toggle_rec.pack(fill="x", padx=40, pady=5)
 
         btn_desabilitar = ctk.CTkButton(modal, text="Desabilitar", fg_color=self.GRAY_DARK, hover_color=self.TEXT_S,
                                     corner_radius=0, height=40,
@@ -1203,6 +1308,17 @@ class CentralMonitoramento(ctk.CTk):
 
     def loop_exibicao(self):
         try:
+            # Atualiza botão de gravação conforme o estado do handler selecionado
+            if self.ip_selecionado:
+                h_sel = self.camera_handlers.get(self.ip_selecionado)
+                if h_sel and h_sel != "CONECTANDO":
+                    if h_sel.gravando:
+                        if self.btn_gravar.cget("text") != "Finalizar":
+                            self.btn_gravar.configure(text="Finalizar", fg_color=self.ACCENT_RED)
+                    else:
+                        if self.btn_gravar.cget("text") != "Gravar":
+                            self.btn_gravar.configure(text="Gravar", fg_color=self.GRAY_DARK)
+
             # Processa novas conexões
             while not self.fila_conexoes.empty():
                 try:
