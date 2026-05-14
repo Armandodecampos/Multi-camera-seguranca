@@ -18,25 +18,39 @@ sem_conexao = threading.Semaphore(10)
 
 # --- CLASSE TOOLTIP ---
 class ToolTip:
+    _active_tooltip = None
+
     def __init__(self, widget, text):
         self.widget = widget
         self.text = text
         self.tooltip_window = None
-        self.widget.bind("<Enter>", self.show_tooltip)
+        self.wait_id = None
+        self.widget.bind("<Enter>", self.schedule_tooltip)
         self.widget.bind("<Leave>", self.hide_tooltip)
+        self.widget.bind("<Button-1>", self.hide_tooltip)
 
-    def show_tooltip(self, event=None):
-        if self.tooltip_window or not self.text:
+    def schedule_tooltip(self, event=None):
+        self.hide_tooltip()
+        if self.text:
+            # Cancela qualquer tooltip ativo antes de agendar novo
+            if ToolTip._active_tooltip:
+                ToolTip._active_tooltip.hide_tooltip()
+            self.wait_id = self.widget.after(400, self.show_tooltip)
+
+    def show_tooltip(self):
+        if not self.text:
             return
 
-        # Posiciona abaixo do widget
-        x = self.widget.winfo_rootx() + (self.widget.winfo_width() // 2)
-        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
+        # Se já houver um ativo, fecha
+        if ToolTip._active_tooltip:
+            ToolTip._active_tooltip.hide_tooltip()
 
-        self.tooltip_window = tw = ctk.CTkToplevel(self.widget)
+        ToolTip._active_tooltip = self
+
+        # Posiciona centralizado abaixo do widget
+        self.tooltip_window = tw = ctk.CTkToplevel()
         tw.wm_overrideredirect(True)
         tw.attributes("-topmost", True)
-        tw.wm_geometry(f"+{int(x)}+{int(y)}")
 
         label = ctk.CTkLabel(tw, text=self.text, justify='left',
                              fg_color="#2B2B2B", text_color="white",
@@ -44,10 +58,41 @@ class ToolTip:
                              font=("Roboto", 11))
         label.pack()
 
-    def hide_tooltip(self, event=None):
-        if self.tooltip_window:
-            self.tooltip_window.destroy()
+        # Força atualização para pegar o tamanho real
+        tw.update_idletasks()
+        tw_w = tw.winfo_width()
+        tw_h = tw.winfo_height()
+
+        try:
+            wx = self.widget.winfo_rootx()
+            wy = self.widget.winfo_rooty()
+            ww = self.widget.winfo_width()
+            wh = self.widget.winfo_height()
+
+            x = wx + (ww // 2) - (tw_w // 2)
+            y = wy + wh + 5
+
+            # Garantia mínima de que não saia da tela à esquerda
+            x = max(10, x)
+
+            tw.wm_geometry(f"+{int(x)}+{int(y)}")
+        except:
+            tw.destroy()
             self.tooltip_window = None
+
+    def hide_tooltip(self, event=None):
+        if self.wait_id:
+            try: self.widget.after_cancel(self.wait_id)
+            except: pass
+            self.wait_id = None
+        if self.tooltip_window:
+            try:
+                self.tooltip_window.destroy()
+            except:
+                pass
+            self.tooltip_window = None
+        if ToolTip._active_tooltip == self:
+            ToolTip._active_tooltip = None
 
     def update_text(self, new_text):
         self.text = new_text
@@ -263,8 +308,18 @@ class CameraHandler:
                                 self.parar_gravacao()
                                 self.timeout_atingido = True
 
-                            cv2.putText(frame_res, timer_txt, (w - 180, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,0), 3)
-                            cv2.putText(frame_res, timer_txt, (w - 180, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,255), 2)
+                            # Calcula tamanho do texto para posicionamento dinâmico
+                            (tw_text, th_text), baseline = cv2.getTextSize(timer_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+
+                            # Se o container for muito estreito, coloca na terceira linha (y=65)
+                            # Caso contrário, mantém na primeira linha (y=25) alinhado à direita
+                            if w < 350:
+                                tx, ty = 10, 65
+                            else:
+                                tx, ty = w - tw_text - 10, 25
+
+                            cv2.putText(frame_res, timer_txt, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 2)
+                            cv2.putText(frame_res, timer_txt, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 1)
 
                     rgb = cv2.cvtColor(frame_res, cv2.COLOR_BGR2RGB)
                     pil_img = Image.fromarray(rgb)
