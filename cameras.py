@@ -877,45 +877,31 @@ class CentralMonitoramento(ctk.CTk):
             return
 
         target_frm = self.slot_frames[idx]
-        cw = target_frm.winfo_width()
-        if cw <= 1: cw = 240 # Fallback inicial
-
         handler = self.camera_handlers.get(ip_atual)
         is_rec = handler and handler != "CONECTANDO" and handler.gravando
 
-        # Lógica de Responsividade (Tamanho e Texto)
+        # Lógica de Ícones
         if self.slot_maximized is not None:
-            h, spc = 70, 10
-            w_opt, w_rec, w_exp = 180, 180, 250
-            f_main = ("Roboto", 16, "bold")
-            txt_exp = "Diminuir"
-            txt_rec = "Finalizar" if is_rec else "Gravar"
-            txt_opt = "Mais Opções"
+            h, w, spc = 60, 60, 10
+            f_main = ("Roboto", 24, "bold")
+            txt_exp = "❐" # Diminuir
+            txt_rec = "■" if is_rec else "●"
+            txt_opt = "⚙"
         else:
-            h = 35
-            f_main = ("Roboto", 11)
-            if cw < 200:
-                spc = 2
-                w_opt, w_rec, w_exp = 35, 35, 35
-                txt_opt, txt_rec, txt_exp = "...", "■" if is_rec else "●", "▲"
-            elif cw < 320:
-                spc = 4
-                w_opt, w_rec, w_exp = 65, 65, 75
-                txt_opt, txt_rec, txt_exp = "Opt", "Fim" if is_rec else "Rec", "Aum."
-            else:
-                spc = 8
-                w_opt, w_rec, w_exp = 100, 90, 110
-                txt_opt, txt_rec, txt_exp = "Opções", "Finalizar" if is_rec else "Gravar", "Aumentar"
+            h, w, spc = 35, 40, 5
+            f_main = ("Roboto", 16, "bold")
+            txt_exp = "⛶" # Aumentar
+            txt_rec = "■" if is_rec else "●"
+            txt_opt = "⚙"
 
-        self.btn_gravar.configure(text=txt_rec, fg_color=self.ACCENT_RED if is_rec else self.GRAY_DARK)
-        self.btn_expandir.configure(text=txt_exp, width=w_exp, height=h, font=f_main)
-        self.btn_gravar.configure(width=w_rec, height=h, font=f_main)
-        self.btn_mais_opcoes.configure(text=txt_opt, width=w_opt, height=h, font=f_main)
+        self.btn_gravar.configure(text=txt_rec, fg_color=self.ACCENT_RED if is_rec else self.GRAY_DARK, width=w, height=h, font=f_main)
+        self.btn_expandir.configure(text=txt_exp, width=w, height=h, font=f_main)
+        self.btn_mais_opcoes.configure(text=txt_opt, width=w, height=h, font=f_main)
 
         # Offsets (anchor="se")
         x_opt = -10
-        x_rec = x_opt - w_opt - spc
-        x_exp = x_rec - w_rec - spc
+        x_rec = x_opt - w - spc
+        x_exp = x_rec - w - spc
 
         # Aplica posicionamento
         self.btn_mais_opcoes.place(in_=target_frm, relx=1.0, rely=1.0, x=x_opt, y=-10, anchor="se")
