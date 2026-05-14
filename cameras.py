@@ -1,6 +1,5 @@
 import cv2
 import customtkinter as ctk
-import tkinter as tk
 from PIL import Image, ImageTk
 import json
 import os
@@ -16,94 +15,6 @@ cv2.setNumThreads(1)
 
 # Semáforo global para limitar conexões simultâneas (evita travamentos)
 sem_conexao = threading.Semaphore(10)
-
-# --- CLASSE TOOLTIP ---
-class ToolTip:
-    _active_window = None
-
-    def __init__(self, widget, text):
-        self.widget = widget
-        self.text = text
-        self.wait_id = None
-        self.widget.bind("<Enter>", self.schedule_tooltip)
-        self.widget.bind("<Leave>", self.hide_tooltip)
-        self.widget.bind("<Button-1>", self.hide_tooltip)
-
-    def schedule_tooltip(self, event=None):
-        self.cancel_wait()
-        if self.text:
-            self.wait_id = self.widget.after(400, self.show_tooltip)
-
-    def cancel_wait(self):
-        if self.wait_id:
-            try: self.widget.after_cancel(self.wait_id)
-            except: pass
-            self.wait_id = None
-
-    def show_tooltip(self):
-        if not self.text:
-            return
-
-        # Fecha qualquer tooltip ativo antes de mostrar um novo
-        ToolTip.hide_active_tooltip()
-
-        # Usamos tk.Toplevel por ser mais leve e estável para overlays rápidos
-        tw = tk.Toplevel(self.widget)
-        tw.wm_overrideredirect(True)
-        tw.attributes("-topmost", True)
-        tw.configure(bg="#2B2B2B")
-
-        ToolTip._active_window = tw
-
-        # Usamos Label padrão do tkinter para evitar o overhead do CustomTkinter em janelas efêmeras
-        label = tk.Label(tw, text=self.text, justify='left',
-                         bg="#2B2B2B", fg="white",
-                         padx=8, pady=4,
-                         font=("Roboto", 11))
-        label.pack()
-
-        # Garante que as dimensões requisitadas sejam processadas
-        tw.update_idletasks()
-        tw_w = tw.winfo_reqwidth()
-        tw_h = tw.winfo_reqheight()
-
-        try:
-            # Posição absoluta do widget pai na tela
-            wx = self.widget.winfo_rootx()
-            wy = self.widget.winfo_rooty()
-            ww = self.widget.winfo_width()
-            wh = self.widget.winfo_height()
-
-            # Centraliza horizontalmente sob o botão
-            x = wx + (ww // 2) - (tw_w // 2)
-            y = wy + wh + 5
-
-            # Ajuste de borda de tela
-            screen_w = tw.winfo_screenwidth()
-            if x + tw_w > screen_w: x = screen_w - tw_w - 10
-            x = max(10, x)
-
-            tw.wm_geometry(f"{tw_w}x{tw_h}+{int(x)}+{int(y)}")
-        except Exception as e:
-            print(f"Erro ao posicionar ToolTip: {e}")
-            tw.destroy()
-            ToolTip._active_window = None
-
-    @classmethod
-    def hide_active_tooltip(cls):
-        if cls._active_window:
-            try:
-                cls._active_window.destroy()
-            except:
-                pass
-            cls._active_window = None
-
-    def hide_tooltip(self, event=None):
-        self.cancel_wait()
-        ToolTip.hide_active_tooltip()
-
-    def update_text(self, new_text):
-        self.text = new_text
 
 # --- CLASSE DE VÍDEO OTIMIZADA ---
 class CameraHandler:
@@ -267,18 +178,27 @@ class CameraHandler:
 
                 # Lógica de Gravação
                 if self.gravando:
+                    elapsed = time.time() - self.tempo_inicio_gravacao
+
+                    # Verifica timeout de 10 minutos (600 segundos) INDEPENDENTE DA UI
+                    if elapsed >= 600:
+                        self.parar_gravacao()
+                        self.timeout_atingido = True
+                        # Continua o loop para processar o encerramento do video_writer
+
                     if self.video_writer is None:
                         try:
-                            h, w = frame.shape[:2]
+                            h_frame, w_frame = frame.shape[:2]
                             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-                            self.video_writer = cv2.VideoWriter(self.caminho_video, fourcc, 25.0, (w, h))
+                            self.video_writer = cv2.VideoWriter(self.caminho_video, fourcc, 25.0, (w_frame, h_frame))
                         except Exception as e:
                             print(f"Erro ao iniciar VideoWriter: {e}")
                             self.gravando = False
 
-                    if self.video_writer is not None:
+                    if self.video_writer is not None and self.gravando:
                         self.video_writer.write(frame)
-                else:
+
+                if not self.gravando:
                     # Se não estiver mais gravando mas o writer ainda existir, fecha-o
                     if self.video_writer is not None:
                         self.video_writer.release()
@@ -311,11 +231,6 @@ class CameraHandler:
                             elapsed = time.time() - self.tempo_inicio_gravacao
                             mins, secs = divmod(int(elapsed), 60)
                             timer_txt = f"REC {mins:02d}:{secs:02d} / 10:00"
-
-                            # Verifica timeout de 10 minutos (600 segundos)
-                            if elapsed >= 600:
-                                self.parar_gravacao()
-                                self.timeout_atingido = True
 
                             # Calcula tamanho do texto para posicionamento dinâmico
                             (tw_text, th_text), baseline = cv2.getTextSize(timer_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
@@ -557,22 +472,17 @@ class CentralMonitoramento(ctk.CTk):
         for i in range(5): self.grid_frame.grid_columnconfigure(i, weight=1)
 
         # Botões de Controle
-        self.btn_expandir = ctk.CTkButton(self.grid_frame, text="Aumentar", width=100, height=35,
-                                           fg_color=self.ACCENT_RED, hover_color=self.ACCENT_WINE,
+        self.btn_expandir = ctk.CTkButton(self.grid_frame, text="Aumentar", width=100, height=30,
+                                           fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
                                            corner_radius=0, command=self.toggle_grid_layout)
 
-        self.btn_gravar = ctk.CTkButton(self.grid_frame, text="Gravar", width=100, height=35,
+        self.btn_gravar = ctk.CTkButton(self.grid_frame, text="Gravar", width=100, height=30,
                                          fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
                                          corner_radius=0, command=self.toggle_gravacao)
 
-        self.btn_mais_opcoes = ctk.CTkButton(self.grid_frame, text="Mais Opções", width=100, height=35,
-                                              fg_color=self.GRAY_DARK, hover_color=self.TEXT_S,
+        self.btn_mais_opcoes = ctk.CTkButton(self.grid_frame, text="Mais Opções", width=100, height=30,
+                                              fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
                                               corner_radius=0, command=self.abrir_menu_opcoes)
-
-        # Tooltips
-        self.tip_expandir = ToolTip(self.btn_expandir, "Aumentar / Diminuir")
-        self.tip_gravar = ToolTip(self.btn_gravar, "Gravar / Parar")
-        self.tip_mais_opcoes = ToolTip(self.btn_mais_opcoes, "Mais Opções")
 
         self.slot_frames = []
         self.slot_labels = []
@@ -999,45 +909,36 @@ class CentralMonitoramento(ctk.CTk):
         target_frm = self.slot_frames[idx]
         handler = self.camera_handlers.get(ip_atual)
         is_rec = handler and handler != "CONECTANDO" and handler.gravando
+        is_max = self.slot_maximized is not None
 
-        # Lógica de Ícones
-        if self.slot_maximized is not None:
-            h, w, spc = 60, 60, 10
-            f_main = ("Roboto", 24, "bold")
-            txt_exp = "❐" # Diminuir
-            txt_rec = "■" if is_rec else "●"
-            txt_opt = "⚙"
-        else:
-            h, w, spc = 35, 40, 5
-            f_main = ("Roboto", 16, "bold")
-            txt_exp = "⛶" # Aumentar
-            txt_rec = "■" if is_rec else "●"
-            txt_opt = "⚙"
+        # Configurações de Texto e Estilo
+        txt_exp = "Diminuir" if is_max else "Aumentar"
+        txt_rec = "Parar" if is_rec else "Gravar"
+        txt_opt = "Mais Opções"
 
-        self.btn_gravar.configure(text=txt_rec, fg_color=self.ACCENT_RED if is_rec else self.GRAY_DARK, width=w, height=h, font=f_main)
-        self.btn_expandir.configure(text=txt_exp, width=w, height=h, font=f_main)
-        self.btn_mais_opcoes.configure(text=txt_opt, width=w, height=h, font=f_main)
+        f_main = ("Roboto", 12, "bold")
+        w_btn = 100
+        h_btn = 30
+        spc = 5
 
-        # Atualiza textos dos tooltips
-        if self.slot_maximized is not None:
-            self.tip_expandir.update_text("Diminuir")
-        else:
-            self.tip_expandir.update_text("Aumentar")
+        # Aplica cores baseadas no estado
+        color_exp = self.ACCENT_RED if is_max else self.GRAY_DARK
+        color_rec = self.ACCENT_RED if is_rec else self.GRAY_DARK
+        color_opt = self.GRAY_DARK # "Mais Opções" não tem estado ativo binário simples aqui
 
-        if is_rec:
-            self.tip_gravar.update_text("Parar Gravação")
-        else:
-            self.tip_gravar.update_text("Gravar")
+        self.btn_expandir.configure(text=txt_exp, fg_color=color_exp, width=w_btn, height=h_btn, font=f_main)
+        self.btn_gravar.configure(text=txt_rec, fg_color=color_rec, width=w_btn, height=h_btn, font=f_main)
+        self.btn_mais_opcoes.configure(text=txt_opt, fg_color=color_opt, width=w_btn, height=h_btn, font=f_main)
 
-        # Offsets (anchor="se")
-        x_opt = -10
-        x_rec = x_opt - w - spc
-        x_exp = x_rec - w - spc
+        # Posicionamento Vertical (Stack) a partir da lateral direita inferior
+        # Ordem de baixo para cima: Mais Opções, Gravar, Aumentar
+        y_opt = -10
+        y_rec = y_opt - h_btn - spc
+        y_exp = y_rec - h_btn - spc
 
-        # Aplica posicionamento
-        self.btn_mais_opcoes.place(in_=target_frm, relx=1.0, rely=1.0, x=x_opt, y=-10, anchor="se")
-        self.btn_gravar.place(in_=target_frm, relx=1.0, rely=1.0, x=x_rec, y=-10, anchor="se")
-        self.btn_expandir.place(in_=target_frm, relx=1.0, rely=1.0, x=x_exp, y=-10, anchor="se")
+        self.btn_mais_opcoes.place(in_=target_frm, relx=1.0, rely=1.0, x=-10, y=y_opt, anchor="se")
+        self.btn_gravar.place(in_=target_frm, relx=1.0, rely=1.0, x=-10, y=y_rec, anchor="se")
+        self.btn_expandir.place(in_=target_frm, relx=1.0, rely=1.0, x=-10, y=y_exp, anchor="se")
 
         # Garante que fiquem no topo
         self.btn_expandir.lift()
