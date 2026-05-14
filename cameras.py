@@ -512,10 +512,8 @@ class CentralMonitoramento(ctk.CTk):
         self.selecionar_slot(self.slot_selecionado)
         self.restaurar_grid()
 
-        # Inicia thread de processamento de conexões staggered
-        threading.Thread(target=self._processar_fila_conexoes_pendentes, daemon=True).start()
-
-        self.alternar_todos_streams()
+        # Delay inicial: A interface carrega primeiro, as câmeras conectam depois
+        self.after(2000, self._iniciar_sistema_conexoes)
         
         def safe_zoom():
             try: self.state("zoomed")
@@ -535,6 +533,12 @@ class CentralMonitoramento(ctk.CTk):
             self.after(500, lambda: self.aplicar_predefinicao(self.ultima_predefinicao))
 
         self.loop_exibicao()
+
+    def _iniciar_sistema_conexoes(self):
+        """Inicia a thread de processamento e dispara as conexões iniciais."""
+        print("SISTEMA: Iniciando conexões com as câmeras...")
+        threading.Thread(target=self._processar_fila_conexoes_pendentes, daemon=True).start()
+        self.alternar_todos_streams()
 
     def _processar_fila_conexoes_pendentes(self):
         while True:
@@ -916,10 +920,21 @@ class CentralMonitoramento(ctk.CTk):
         txt_rec = "Parar" if is_rec else "Gravar"
         txt_opt = "Mais Opções"
 
-        f_main = ("Roboto", 12, "bold")
-        w_btn = 100
-        h_btn = 30
-        spc = 5
+        # Se maximizada, dobra o tamanho (200x60, font 24)
+        if is_max:
+            f_main = ("Roboto", 24, "bold")
+            w_btn = 200
+            h_btn = 60
+            spc = 10
+            x_offset = -20
+            y_start = -20
+        else:
+            f_main = ("Roboto", 12, "bold")
+            w_btn = 100
+            h_btn = 30
+            spc = 5
+            x_offset = -10
+            y_start = -10
 
         # Aplica cores baseadas no estado
         color_exp = self.ACCENT_RED if is_max else self.GRAY_DARK
@@ -932,13 +947,13 @@ class CentralMonitoramento(ctk.CTk):
 
         # Posicionamento Vertical (Stack) a partir da lateral direita inferior
         # Ordem de baixo para cima: Mais Opções, Gravar, Aumentar
-        y_opt = -10
+        y_opt = y_start
         y_rec = y_opt - h_btn - spc
         y_exp = y_rec - h_btn - spc
 
-        self.btn_mais_opcoes.place(in_=target_frm, relx=1.0, rely=1.0, x=-10, y=y_opt, anchor="se")
-        self.btn_gravar.place(in_=target_frm, relx=1.0, rely=1.0, x=-10, y=y_rec, anchor="se")
-        self.btn_expandir.place(in_=target_frm, relx=1.0, rely=1.0, x=-10, y=y_exp, anchor="se")
+        self.btn_mais_opcoes.place(in_=target_frm, relx=1.0, rely=1.0, x=x_offset, y=y_opt, anchor="se")
+        self.btn_gravar.place(in_=target_frm, relx=1.0, rely=1.0, x=x_offset, y=y_rec, anchor="se")
+        self.btn_expandir.place(in_=target_frm, relx=1.0, rely=1.0, x=x_offset, y=y_exp, anchor="se")
 
         # Garante que fiquem no topo
         self.btn_expandir.lift()
