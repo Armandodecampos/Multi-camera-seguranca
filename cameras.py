@@ -216,15 +216,20 @@ class CameraHandler:
 
                     # Adiciona Nome e IP para debug visual apenas se houver espaço e estiver habilitado
                     if h > 50:
+                        # Define deslocamento Y se estiver gravando para não sobrepor o indicador REC
+                        y_offset_info = 20 if self.gravando else 0
+
                         if self.exibir_info:
                             # Nome da Câmera (Superior Esquerda)
+                            y_nome = 25 + y_offset_info
                             if self.nome_display:
-                                cv2.putText(frame_res, self.nome_display, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 2)
-                                cv2.putText(frame_res, self.nome_display, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
+                                cv2.putText(frame_res, self.nome_display, (10, y_nome), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 2)
+                                cv2.putText(frame_res, self.nome_display, (10, y_nome), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
 
                             # IP da Câmera (Linha abaixo)
-                            cv2.putText(frame_res, self.ip_display, (10, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 2)
-                            cv2.putText(frame_res, self.ip_display, (10, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
+                            y_ip = 45 + y_offset_info
+                            cv2.putText(frame_res, self.ip_display, (10, y_ip), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 2)
+                            cv2.putText(frame_res, self.ip_display, (10, y_ip), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
 
                         # Indicador de Gravação (Sempre visível se estiver gravando)
                         if self.gravando:
@@ -235,12 +240,8 @@ class CameraHandler:
                             # Calcula tamanho do texto para posicionamento dinâmico
                             (tw_text, th_text), baseline = cv2.getTextSize(timer_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
 
-                            # Se o container for muito estreito, coloca na terceira linha (y=65)
-                            # Caso contrário, mantém na primeira linha (y=25) alinhado à direita
-                            if w < 350:
-                                tx, ty = 10, 65
-                            else:
-                                tx, ty = w - tw_text - 10, 25
+                            # Posicionamento fixo no canto superior esquerdo
+                            tx, ty = 10, 25
 
                             # Adiciona fundo semi-transparente para melhor legibilidade
                             cv2.rectangle(frame_res, (tx - 5, ty - th_text - 5), (tx + tw_text + 5, ty + baseline + 5), (0,0,0), -1)
@@ -532,6 +533,7 @@ class CentralMonitoramento(ctk.CTk):
         if self.ultima_predefinicao and self.ultima_predefinicao in self.predefinicoes:
             self.after(500, lambda: self.aplicar_predefinicao(self.ultima_predefinicao))
 
+        self.last_button_state = None
         self.loop_exibicao()
 
     def _iniciar_sistema_conexoes(self):
@@ -904,6 +906,16 @@ class CentralMonitoramento(ctk.CTk):
         # Se não houver IP no slot ou slot inválido, esconde botões
         ip_atual = self.grid_cameras[idx] if (idx is not None and 0 <= idx < 20) else "0.0.0.0"
 
+        handler = self.camera_handlers.get(ip_atual)
+        is_rec = handler and handler != "CONECTANDO" and getattr(handler, 'gravando', False)
+        is_max = self.slot_maximized is not None
+
+        # Cache de estado para evitar flickering por chamadas redundantes
+        current_state = (idx, ip_atual, is_rec, is_max)
+        if current_state == getattr(self, 'last_button_state', None):
+            return
+        self.last_button_state = current_state
+
         if not ip_atual or ip_atual == "0.0.0.0":
             self.btn_expandir.place_forget()
             self.btn_gravar.place_forget()
@@ -911,9 +923,6 @@ class CentralMonitoramento(ctk.CTk):
             return
 
         target_frm = self.slot_frames[idx]
-        handler = self.camera_handlers.get(ip_atual)
-        is_rec = handler and handler != "CONECTANDO" and handler.gravando
-        is_max = self.slot_maximized is not None
 
         # Configurações de Texto e Estilo
         txt_exp = "Diminuir" if is_max else "Aumentar"
@@ -1480,10 +1489,6 @@ class CentralMonitoramento(ctk.CTk):
                     # print(f"Erro render slot {i}: {e}")
                     pass
 
-            if self.btn_expandir.winfo_ismapped():
-                self.btn_expandir.lift()
-            if self.btn_mais_opcoes.winfo_ismapped():
-                self.btn_mais_opcoes.lift()
 
         except Exception as e: print(f"Erro no loop de exibição: {e}")
         finally: self.after(50, self.loop_exibicao) # Ajustado para 50ms para equilibrar fluidez e CPU
