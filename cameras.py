@@ -16,6 +16,42 @@ cv2.setNumThreads(1)
 # Semáforo global para limitar conexões simultâneas (evita travamentos)
 sem_conexao = threading.Semaphore(10)
 
+# --- CLASSE TOOLTIP ---
+class ToolTip:
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tooltip_window = None
+        self.widget.bind("<Enter>", self.show_tooltip)
+        self.widget.bind("<Leave>", self.hide_tooltip)
+
+    def show_tooltip(self, event=None):
+        if self.tooltip_window or not self.text:
+            return
+
+        # Posiciona abaixo do widget
+        x = self.widget.winfo_rootx() + (self.widget.winfo_width() // 2)
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
+
+        self.tooltip_window = tw = ctk.CTkToplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.attributes("-topmost", True)
+        tw.wm_geometry(f"+{int(x)}+{int(y)}")
+
+        label = ctk.CTkLabel(tw, text=self.text, justify='left',
+                             fg_color="#2B2B2B", text_color="white",
+                             corner_radius=5, padx=8, pady=4,
+                             font=("Roboto", 11))
+        label.pack()
+
+    def hide_tooltip(self, event=None):
+        if self.tooltip_window:
+            self.tooltip_window.destroy()
+            self.tooltip_window = None
+
+    def update_text(self, new_text):
+        self.text = new_text
+
 # --- CLASSE DE VÍDEO OTIMIZADA ---
 class CameraHandler:
     def __init__(self, ip, canal=102, user="admin", password="password"):
@@ -41,6 +77,8 @@ class CameraHandler:
         self.gravando = False
         self.video_writer = None
         self.caminho_video = None
+        self.tempo_inicio_gravacao = 0
+        self.timeout_atingido = False
 
     def verificar_alcance(self, timeout=1.0):
         """Verifica se o IP e a porta RTSP (554) estão acessíveis."""
@@ -75,6 +113,8 @@ class CameraHandler:
         with self.lock:
             self.caminho_video = filepath
             self.gravando = True
+            self.tempo_inicio_gravacao = time.time()
+            self.timeout_atingido = False
             print(f"Gravação iniciada: {filepath}")
 
     def parar_gravacao(self):
@@ -214,8 +254,17 @@ class CameraHandler:
 
                         # Indicador de Gravação
                         if self.gravando:
-                            cv2.putText(frame_res, "REC", (w - 50, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,0), 3)
-                            cv2.putText(frame_res, "REC", (w - 50, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,255), 2)
+                            elapsed = time.time() - self.tempo_inicio_gravacao
+                            mins, secs = divmod(int(elapsed), 60)
+                            timer_txt = f"REC {mins:02d}:{secs:02d} / 10:00"
+
+                            # Verifica timeout de 10 minutos (600 segundos)
+                            if elapsed >= 600:
+                                self.parar_gravacao()
+                                self.timeout_atingido = True
+
+                            cv2.putText(frame_res, timer_txt, (w - 180, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,0), 3)
+                            cv2.putText(frame_res, timer_txt, (w - 180, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,255), 2)
 
                     rgb = cv2.cvtColor(frame_res, cv2.COLOR_BGR2RGB)
                     pil_img = Image.fromarray(rgb)
@@ -453,6 +502,11 @@ class CentralMonitoramento(ctk.CTk):
         self.btn_mais_opcoes = ctk.CTkButton(self.grid_frame, text="Mais Opções", width=100, height=35,
                                               fg_color=self.GRAY_DARK, hover_color=self.TEXT_S,
                                               corner_radius=0, command=self.abrir_menu_opcoes)
+
+        # Tooltips
+        self.tip_expandir = ToolTip(self.btn_expandir, "Aumentar / Diminuir")
+        self.tip_gravar = ToolTip(self.btn_gravar, "Gravar / Parar")
+        self.tip_mais_opcoes = ToolTip(self.btn_mais_opcoes, "Mais Opções")
 
         self.slot_frames = []
         self.slot_labels = []
@@ -898,6 +952,17 @@ class CentralMonitoramento(ctk.CTk):
         self.btn_expandir.configure(text=txt_exp, width=w, height=h, font=f_main)
         self.btn_mais_opcoes.configure(text=txt_opt, width=w, height=h, font=f_main)
 
+        # Atualiza textos dos tooltips
+        if self.slot_maximized is not None:
+            self.tip_expandir.update_text("Diminuir")
+        else:
+            self.tip_expandir.update_text("Aumentar")
+
+        if is_rec:
+            self.tip_gravar.update_text("Parar Gravação")
+        else:
+            self.tip_gravar.update_text("Gravar")
+
         # Offsets (anchor="se")
         x_opt = -10
         x_rec = x_opt - w - spc
@@ -1322,6 +1387,13 @@ class CentralMonitoramento(ctk.CTk):
 
             for i in range(20):
                 ip = self.grid_cameras[i]
+
+                # Verifica se houve timeout na gravação
+                handler = self.camera_handlers.get(ip)
+                if handler and handler != "CONECTANDO" and handler.timeout_atingido:
+                    handler.timeout_atingido = False
+                    nome = self.dados_cameras.get(ip, ip)
+                    self.abrir_modal_alerta("Gravação Finalizada", f"A gravação da câmera {nome} foi finalizada automaticamente após 10 minutos.")
 
                 # Caso o slot deva estar vazio ou não esteja no foco de atualização
                 if not ip or ip == "0.0.0.0" or i not in indices_trabalho:
