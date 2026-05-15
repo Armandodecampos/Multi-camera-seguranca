@@ -841,13 +841,14 @@ class CentralMonitoramento(ctk.CTk):
                 self.restaurar_grid()
 
             for i in range(self.num_slots):
-                self.recriar_label_slot(i)
-                # Forçamos a limpeza do CTkImage para evitar o erro "pyimage doesn't exist"
+                # Limpamos TUDO antes de recriar para garantir estado virgem
                 self.slot_ctk_images[i] = None
+                self.cache_ui_text[i] = None
+                self.cache_ui_image[i] = None
+                self.cache_ui_size[i] = None
+                self.recriar_label_slot(i)
 
-            self.cache_ui_text = [None] * self.num_slots
-            self.cache_ui_image = [None] * self.num_slots
-            self.cache_ui_size = [None] * self.num_slots
+            self.selecionar_slot(self.slot_selecionado)
             self.update_idletasks()
             print("SISTEMA: Recuperação concluída.")
         except Exception as e:
@@ -1456,7 +1457,12 @@ class CentralMonitoramento(ctk.CTk):
         # Verifica se já está conectando ou rodando
         if ip in self.camera_handlers:
             handler = self.camera_handlers[ip]
-            if handler == "CONECTANDO": return
+            if handler == "CONECTANDO":
+                # Se estiver marcado como conectando mas NÃO estiver na fila, re-adiciona (Race Condition fix)
+                if ip not in self.ips_em_fila:
+                    self.ips_em_fila.add(ip)
+                    self.fila_pendente_conexoes.put((ip, canal))
+                return
             if getattr(handler, 'rodando', False): return
             del self.camera_handlers[ip]
 
@@ -1499,6 +1505,7 @@ class CentralMonitoramento(ctk.CTk):
         self.atualizar_botoes_controle()
 
     def loop_exibicao(self):
+        delay_proximo_ciclo = 30
         try:
             # Lógica de detecção de restauração (Minimizado -> Normal)
             is_iconic = self.state() == "iconic"
@@ -1506,7 +1513,7 @@ class CentralMonitoramento(ctk.CTk):
 
             if is_iconic:
                 self.iconic_state = True
-                self.after(500, self.loop_exibicao)
+                delay_proximo_ciclo = 500
                 return
 
             if getattr(self, 'iconic_state', False):
@@ -1666,10 +1673,15 @@ class CentralMonitoramento(ctk.CTk):
                     # print(f"Erro render slot {i}: {e}")
                     pass
 
-            self.after(30, self.loop_exibicao)
         except Exception as e:
             # print(f"Erro no loop de exibicao: {e}")
-            self.after(100, self.loop_exibicao)
+            delay_proximo_ciclo = 200
+        finally:
+            # O agendamento ocorre sempre aqui, garantindo que o loop nunca pare e não duplique
+            try:
+                self.after(delay_proximo_ciclo, self.loop_exibicao)
+            except:
+                pass
 
     def filtrar_lista(self):
         termo = self.entry_busca.get().lower()
