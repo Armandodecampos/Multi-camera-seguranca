@@ -10,7 +10,7 @@ import queue
 import requests
 from requests.auth import HTTPDigestAuth
 # Configuração de baixa latência para OpenCV/FFMPEG
-os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp;stimeout;5000000;buffer_size;2048000;analyzeduration;50000;probesize;50000;fflags;discardcorrupt;max_delay;500000;reorder_queue_size;32;rtsp_flags;prefer_tcp;reconnect;1;reconnect_streamed;1;reconnect_at_eof;1;allowed_media_types;video"
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp;stimeout;5000000;buffer_size;2048000;analyzeduration;100000;probesize;100000;fflags;discardcorrupt;max_delay;500000;reorder_queue_size;64;rtsp_flags;prefer_tcp;reconnect;1;reconnect_streamed;1;reconnect_at_eof;1;allowed_media_types;video"
 cv2.setNumThreads(1)
 
 # Semáforo global para limitar conexões simultâneas (evita travamentos)
@@ -578,8 +578,8 @@ class CentralMonitoramento(ctk.CTk):
                 # Inicia a conexão real
                 threading.Thread(target=self._thread_conectar, args=(ip, canal), daemon=True).start()
 
-                # Pausa mínima para não sobrecarregar o processador de threads em disparadas
-                time.sleep(0.01)
+                # Pausa escalonada para não sobrecarregar o processador de threads e a rede
+                time.sleep(0.2)
 
             except Exception as e:
                 print(f"Erro no processador de conexões: {e}")
@@ -710,15 +710,15 @@ class CentralMonitoramento(ctk.CTk):
 
     def ao_restaurar(self, event=None):
         """Reseta caches da UI ao restaurar a janela para evitar tela preta."""
+        # Filtra para executar apenas quando a janela principal for mapeada
+        if event and event.widget != self:
+            return
+
         # print("LOG: Janela restaurada, resetando caches da UI...")
         self.cache_ui_text = [None] * self.num_slots
         self.cache_ui_image = [None] * self.num_slots
         self.cache_ui_size = [None] * self.num_slots
         self.slot_ctk_images = [None] * self.num_slots
-        try:
-            self.update()
-        except:
-            pass
 
     def ao_fechar(self):
         # Para todas as gravações ativas
@@ -1317,7 +1317,7 @@ class CentralMonitoramento(ctk.CTk):
         if ip in self.cooldown_conexoes:
             cooldown_data = self.cooldown_conexoes[ip]
             ts = cooldown_data[0] if isinstance(cooldown_data, tuple) else cooldown_data
-            if agora - ts < 10: return
+            if agora - ts < 30: return
 
         # Verifica se já está conectando ou rodando
         if ip in self.camera_handlers:
@@ -1440,7 +1440,7 @@ class CentralMonitoramento(ctk.CTk):
                     ts = cooldown_data[0] if isinstance(cooldown_data, tuple) else cooldown_data
                     erro = cooldown_data[1] if isinstance(cooldown_data, tuple) else "FALHA CONEXÃO"
 
-                    if agora - ts < 10:
+                    if agora - ts < 30:
                         try:
                             target_status = f"{erro}\n{ip}" if i == self.slot_selecionado else erro
                             if self.cache_ui_image[i] != self.img_vazia or self.cache_ui_text[i] != target_status:
