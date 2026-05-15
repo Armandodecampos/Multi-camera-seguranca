@@ -256,7 +256,6 @@ class CameraHandler:
                     continue
 
                 # Se a UI ainda não consumiu o frame anterior, e não é prioridade, podemos pular
-                # Se a UI ainda não consumiu o frame anterior, e não é prioridade, podemos pular
                 # Se estiver gravando, não pulamos a decodificação
                 if self.novo_frame and not self.prioridade and not self.gravando:
                     if now - last_process_time < 0.2:
@@ -1468,7 +1467,7 @@ class CentralMonitoramento(ctk.CTk):
 
     def loop_exibicao(self):
         try:
-            # Lógica de restauração Snappy + Nuclear
+            # Lógica de restauração aprimorada
             is_iconic = self.state() == "iconic"
             force_refresh = False
 
@@ -1477,13 +1476,16 @@ class CentralMonitoramento(ctk.CTk):
                 self.after(200, self.loop_exibicao)
                 return
 
-            if getattr(self, 'iconic_state', False):
-                # Acabou de restaurar
+            # Verifica restauração por iconic_state ou por flag de evento <Map>
+            if getattr(self, 'iconic_state', False) or getattr(self, 'necessita_refresh_total', False):
                 print("SISTEMA: Restaurando interface...")
-                for i in range(self.num_slots):
-                    self.recriar_label_slot(i)
+                # Reset caches para forçar redesenho completo no ciclo atual
+                self.cache_ui_text = [None] * self.num_slots
+                self.cache_ui_image = [None] * self.num_slots
+                self.cache_ui_size = [None] * self.num_slots
                 self.update_idletasks()
                 force_refresh = True
+                self.necessita_refresh_total = False
 
             self.iconic_state = False
 
