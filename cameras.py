@@ -416,7 +416,6 @@ class CentralMonitoramento(ctk.CTk):
         self.pass_ptz = "1357gov@"
 
         self.protocol("WM_DELETE_WINDOW", self.ao_fechar)
-        self.bind("<Map>", self.ao_restaurar)
 
         # Binds de Teclado
         self.bind("<Escape>", lambda event: self.sair_tela_cheia())
@@ -680,9 +679,8 @@ class CentralMonitoramento(ctk.CTk):
                         del self.camera_handlers[ip]
 
             # Agenda o próximo processamento (sequencial e controlado)
-            self.after(150, self._processar_fila_conexoes)
+            self.after(100, self._processar_fila_conexoes)
         except Exception as e:
-            # print(f"Erro no despachante: {e}")
             self.after(500, self._processar_fila_conexoes)
 
     # --- LÓGICA DO TOGGLE DA SIDEBAR ---
@@ -829,14 +827,31 @@ class CentralMonitoramento(ctk.CTk):
         except Exception as e:
             print(f"Erro ao restaurar layout total: {e}")
 
-    def ao_restaurar(self, event=None):
-        """Sinaliza que a UI necessita de um refresh total após restauração."""
-        # Filtra para executar apenas quando a janela principal for mapeada
-        if event and event.widget != self:
-            return
+    def recuperar_interface_pos_minimizacao(self):
+        """Re-aplica o layout e recria labels para recuperar do erro de tela preta."""
+        print("SISTEMA: Executando recuperação total da interface...")
+        try:
+            self.iconic_state = False
+            self.restaurar_layout_total()
 
-        # Em vez de processar imediatamente (o que pode travar o evento), sinaliza para o loop
-        self.necessita_refresh_total = True
+            # Garante que as dimensões do grid estejam corretas antes de recriar labels
+            if self.slot_maximized is not None:
+                self.maximizar_slot(self.slot_maximized)
+            else:
+                self.restaurar_grid()
+
+            for i in range(self.num_slots):
+                self.recriar_label_slot(i)
+                # Forçamos a limpeza do CTkImage para evitar o erro "pyimage doesn't exist"
+                self.slot_ctk_images[i] = None
+
+            self.cache_ui_text = [None] * self.num_slots
+            self.cache_ui_image = [None] * self.num_slots
+            self.cache_ui_size = [None] * self.num_slots
+            self.update_idletasks()
+            print("SISTEMA: Recuperação concluída.")
+        except Exception as e:
+            print(f"Erro na recuperação de interface: {e}")
 
     def ao_fechar(self):
         # Para todas as gravações ativas
@@ -1335,7 +1350,8 @@ class CentralMonitoramento(ctk.CTk):
             lbl.bind("<ButtonRelease-1>", lambda e, x=idx: self.ao_soltar_slot(e, x))
 
             self.slot_labels[idx] = lbl
-            self.slot_ctk_images[idx] = None
+            # Mantemos o objeto self.slot_ctk_images[idx] para evitar "pyimage" explosion
+            # mas limpamos caches de texto e imagem para forçar o redesenho imediato
             self.cache_ui_text[idx] = None
             self.cache_ui_image[idx] = None
             return lbl
@@ -1484,7 +1500,7 @@ class CentralMonitoramento(ctk.CTk):
 
     def loop_exibicao(self):
         try:
-            # Lógica de restauração aprimorada
+            # Lógica de detecção de restauração (Minimizado -> Normal)
             is_iconic = self.state() == "iconic"
             force_refresh = False
 
@@ -1493,20 +1509,11 @@ class CentralMonitoramento(ctk.CTk):
                 self.after(500, self.loop_exibicao)
                 return
 
-            # Verifica restauração por iconic_state ou por flag de evento <Map>
-            if getattr(self, 'iconic_state', False) or getattr(self, 'necessita_refresh_total', False):
-                print("SISTEMA: Restaurando interface...")
-                # Reset caches para forçar redesenho completo no ciclo atual
-                self.cache_ui_text = [None] * self.num_slots
-                self.cache_ui_image = [None] * self.num_slots
-                self.cache_ui_size = [None] * self.num_slots
-
-                # O 'update()' força o Tkinter a redesenhar buffers internos que podem estar corrompidos
-                try: self.update()
-                except: pass
-
+            if getattr(self, 'iconic_state', False):
+                # Acabou de restaurar: Agenda recuperação profunda para evitar RecursionError
+                self.iconic_state = False
+                self.after(200, self.recuperar_interface_pos_minimizacao)
                 force_refresh = True
-                self.necessita_refresh_total = False
 
             self.iconic_state = False
 
@@ -1659,9 +1666,10 @@ class CentralMonitoramento(ctk.CTk):
                     # print(f"Erro render slot {i}: {e}")
                     pass
 
-
-        except Exception as e: print(f"Erro no loop de exibicao: {e}")
-        finally: self.after(30, self.loop_exibicao) # Reduzido para 30ms para maior fluidez
+            self.after(30, self.loop_exibicao)
+        except Exception as e:
+            # print(f"Erro no loop de exibicao: {e}")
+            self.after(100, self.loop_exibicao)
 
     def filtrar_lista(self):
         termo = self.entry_busca.get().lower()
