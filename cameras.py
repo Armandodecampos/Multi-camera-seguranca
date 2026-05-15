@@ -10,7 +10,7 @@ import queue
 import requests
 from requests.auth import HTTPDigestAuth
 # Configuração de baixa latência para OpenCV/FFMPEG
-os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp;stimeout;5000000;buffer_size;2048000;analyzeduration;100000;probesize;100000;fflags;discardcorrupt;max_delay;500000;reorder_queue_size;64;rtsp_flags;prefer_tcp;reconnect;1;reconnect_streamed;1;reconnect_at_eof;1;allowed_media_types;video"
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp;stimeout;10000000;buffer_size;2048000;analyzeduration;100000;probesize;100000;fflags;discardcorrupt;max_delay;500000;reorder_queue_size;64;rtsp_flags;prefer_tcp;reconnect;1;reconnect_streamed;1;reconnect_at_eof;1;allowed_media_types;video"
 cv2.setNumThreads(1)
 
 # Semáforo global para limitar conexões simultâneas (evita travamentos)
@@ -313,7 +313,9 @@ class CentralMonitoramento(ctk.CTk):
 
     def __init__(self):
         super().__init__()
+        print("SISTEMA: Inicializando interface...")
 
+        self.num_slots = 20
         self.title("Sistema de Monitoramento ABI - Full Control V5 + PTZ")
         self.geometry("1200x800")
         ctk.set_appearance_mode("Dark")
@@ -367,14 +369,15 @@ class CentralMonitoramento(ctk.CTk):
         self.ultima_predefinicao = None
         self.aba_ativa = "Câmeras"
         self.tamanho_preview = "Pequeno"
+        self.necessita_refresh_total = False
 
-        self.num_slots = 20
-
+        print("SISTEMA: Carregando configurações...")
         self.carregar_posicao_janela()
         self.predefinicoes = self.carregar_predefinicoes()
         self.ips_unicos = self.carregar_lista_ips()
         self.dados_cameras = self.carregar_config()
         self.grid_cameras = self.carregar_grid()
+        print(f"SISTEMA: {len(self.ips_unicos)} IPs carregados.")
 
         # Cache persistente de CTkImage por slot para evitar "pyimage" explosion
         self.slot_ctk_images = [None] * self.num_slots
@@ -512,6 +515,7 @@ class CentralMonitoramento(ctk.CTk):
             self.slot_frames.append(frm)
             self.slot_labels.append(lbl)
 
+        print("SISTEMA: Atualizando listas da UI...")
         self.atualizar_lista_cameras_ui()
         # Restaura estado inicial
         for i, ip in enumerate(self.grid_cameras):
@@ -523,7 +527,8 @@ class CentralMonitoramento(ctk.CTk):
         self.restaurar_grid()
 
         # Delay inicial: A interface carrega primeiro, as câmeras conectam depois
-        self.after(2000, self._iniciar_sistema_conexoes)
+        self.after(300, self._iniciar_sistema_conexoes)
+        print("SISTEMA: Pronto.")
         
         def safe_zoom():
             try: self.state("zoomed")
@@ -579,7 +584,7 @@ class CentralMonitoramento(ctk.CTk):
                 threading.Thread(target=self._thread_conectar, args=(ip, canal), daemon=True).start()
 
                 # Pausa escalonada para não sobrecarregar o processador de threads e a rede
-                time.sleep(0.2)
+                time.sleep(0.1)
 
             except Exception as e:
                 print(f"Erro no processador de conexões: {e}")
@@ -709,16 +714,13 @@ class CentralMonitoramento(ctk.CTk):
             except Exception as e: print(f"Erro ao carregar janela: {e}")
 
     def ao_restaurar(self, event=None):
-        """Reseta caches da UI ao restaurar a janela para evitar tela preta."""
+        """Sinaliza que a UI necessita de um refresh total após restauração."""
         # Filtra para executar apenas quando a janela principal for mapeada
         if event and event.widget != self:
             return
 
-        # print("LOG: Janela restaurada, resetando caches da UI...")
-        self.cache_ui_text = [None] * self.num_slots
-        self.cache_ui_image = [None] * self.num_slots
-        self.cache_ui_size = [None] * self.num_slots
-        self.slot_ctk_images = [None] * self.num_slots
+        # Em vez de processar imediatamente (o que pode travar o evento), sinaliza para o loop
+        self.necessita_refresh_total = True
 
     def ao_fechar(self):
         # Para todas as gravações ativas
@@ -1317,7 +1319,7 @@ class CentralMonitoramento(ctk.CTk):
         if ip in self.cooldown_conexoes:
             cooldown_data = self.cooldown_conexoes[ip]
             ts = cooldown_data[0] if isinstance(cooldown_data, tuple) else cooldown_data
-            if agora - ts < 30: return
+            if agora - ts < 60: return
 
         # Verifica se já está conectando ou rodando
         if ip in self.camera_handlers:
@@ -1366,6 +1368,16 @@ class CentralMonitoramento(ctk.CTk):
 
     def loop_exibicao(self):
         try:
+            # Verifica se houve sinalização de restauração da janela
+            if self.necessita_refresh_total:
+                print("SISTEMA: Restaurando interface...")
+                self.cache_ui_text = [None] * self.num_slots
+                self.cache_ui_image = [None] * self.num_slots
+                self.cache_ui_size = [None] * self.num_slots
+                self.slot_ctk_images = [None] * self.num_slots
+                self.update_idletasks()
+                self.necessita_refresh_total = False
+
             # Atualiza o scaling da janela a cada 50 loops (aprox 1.5s) para economizar chamadas
             self._loop_counter += 1
             if self._loop_counter >= 50:
@@ -1440,7 +1452,7 @@ class CentralMonitoramento(ctk.CTk):
                     ts = cooldown_data[0] if isinstance(cooldown_data, tuple) else cooldown_data
                     erro = cooldown_data[1] if isinstance(cooldown_data, tuple) else "FALHA CONEXÃO"
 
-                    if agora - ts < 30:
+                    if agora - ts < 60:
                         try:
                             target_status = f"{erro}\n{ip}" if i == self.slot_selecionado else erro
                             if self.cache_ui_image[i] != self.img_vazia or self.cache_ui_text[i] != target_status:
