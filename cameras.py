@@ -10,11 +10,11 @@ import queue
 import requests
 from requests.auth import HTTPDigestAuth
 # Configuração de baixa latência para OpenCV/FFMPEG
-os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp;stimeout;3000000;buffer_size;2048000;analyzeduration;50000;probesize;50000;fflags;discardcorrupt;max_delay;500000;reorder_queue_size;16;rtsp_flags;prefer_tcp;reconnect;1;reconnect_streamed;1;reconnect_at_eof;1;allowed_media_types;video"
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp;stimeout;5000000;buffer_size;2048000;analyzeduration;50000;probesize;50000;fflags;discardcorrupt;max_delay;500000;reorder_queue_size;32;rtsp_flags;prefer_tcp;reconnect;1;reconnect_streamed;1;reconnect_at_eof;1;allowed_media_types;video"
 cv2.setNumThreads(1)
 
 # Semáforo global para limitar conexões simultâneas (evita travamentos)
-sem_conexao = threading.Semaphore(20)
+sem_conexao = threading.Semaphore(30)
 
 # --- CLASSE DE VÍDEO OTIMIZADA ---
 class CameraHandler:
@@ -323,6 +323,7 @@ class CentralMonitoramento(ctk.CTk):
         self.pass_ptz = "1357gov@"
 
         self.protocol("WM_DELETE_WINDOW", self.ao_fechar)
+        self.bind("<Map>", self.ao_restaurar)
 
         # Binds de Teclado
         self.bind("<Escape>", lambda event: self.sair_tela_cheia())
@@ -367,6 +368,8 @@ class CentralMonitoramento(ctk.CTk):
         self.aba_ativa = "Câmeras"
         self.tamanho_preview = "Pequeno"
 
+        self.num_slots = 20
+
         self.carregar_posicao_janela()
         self.predefinicoes = self.carregar_predefinicoes()
         self.ips_unicos = self.carregar_lista_ips()
@@ -374,11 +377,11 @@ class CentralMonitoramento(ctk.CTk):
         self.grid_cameras = self.carregar_grid()
 
         # Cache persistente de CTkImage por slot para evitar "pyimage" explosion
-        self.slot_ctk_images = [None] * 20
+        self.slot_ctk_images = [None] * self.num_slots
         # Cache de estado da UI para evitar chamadas redundantes ao Tcl/Tk
-        self.cache_ui_text = [None] * 20
-        self.cache_ui_image = [None] * 20
-        self.cache_ui_size = [None] * 20
+        self.cache_ui_text = [None] * self.num_slots
+        self.cache_ui_image = [None] * self.num_slots
+        self.cache_ui_size = [None] * self.num_slots
         # Imagem 1x1 transparente para resets seguros
         self.img_vazia = ctk.CTkImage(Image.new('RGBA', (1, 1), (0,0,0,0)), size=(1, 1))
 
@@ -493,7 +496,7 @@ class CentralMonitoramento(ctk.CTk):
 
         self.slot_frames = []
         self.slot_labels = []
-        for i in range(20):
+        for i in range(self.num_slots):
             row, col = i // 5, i % 5
             frm = ctk.CTkFrame(self.grid_frame, fg_color=self.BG_SIDEBAR, corner_radius=2, border_width=2, border_color="black")
             frm.grid(row=row, column=col, padx=1, pady=1, sticky="nsew")
@@ -553,28 +556,31 @@ class CentralMonitoramento(ctk.CTk):
     def _processar_fila_conexoes_pendentes(self):
         while True:
             try:
-                if not self.fila_pendente_conexoes.empty():
-                    ip, canal = self.fila_pendente_conexoes.get()
-                    self.ips_em_fila.discard(ip)
+                # Usa timeout no get() para evitar busy-loop e melhorar a responsividade
+                try:
+                    ip, canal = self.fila_pendente_conexoes.get(timeout=0.1)
+                except queue.Empty:
+                    continue
 
-                    # Verifica se o IP ainda está no grid
-                    if ip not in self.grid_cameras:
-                        if self.camera_handlers.get(ip) == "CONECTANDO":
-                            del self.camera_handlers[ip]
-                        continue
+                self.ips_em_fila.discard(ip)
 
-                    # Se já tiver um handler rodando, não faz nada
-                    handler = self.camera_handlers.get(ip)
-                    if handler and handler != "CONECTANDO" and getattr(handler, 'rodando', False):
-                        continue
+                # Verifica se o IP ainda está no grid
+                if ip not in self.grid_cameras:
+                    if self.camera_handlers.get(ip) == "CONECTANDO":
+                        del self.camera_handlers[ip]
+                    continue
 
-                    # Inicia a conexão real
-                    threading.Thread(target=self._thread_conectar, args=(ip, canal), daemon=True).start()
+                # Se já tiver um handler rodando, não faz nada
+                handler = self.camera_handlers.get(ip)
+                if handler and handler != "CONECTANDO" and getattr(handler, 'rodando', False):
+                    continue
 
-                    # Pausa menor para acelerar conexões sequenciais
-                    time.sleep(0.02)
-                else:
-                    time.sleep(0.02)
+                # Inicia a conexão real
+                threading.Thread(target=self._thread_conectar, args=(ip, canal), daemon=True).start()
+
+                # Pausa mínima para não sobrecarregar o processador de threads em disparadas
+                time.sleep(0.01)
+
             except Exception as e:
                 print(f"Erro no processador de conexões: {e}")
                 time.sleep(1)
@@ -702,6 +708,18 @@ class CentralMonitoramento(ctk.CTk):
                         self.tamanho_preview = "Grande"
             except Exception as e: print(f"Erro ao carregar janela: {e}")
 
+    def ao_restaurar(self, event=None):
+        """Reseta caches da UI ao restaurar a janela para evitar tela preta."""
+        # print("LOG: Janela restaurada, resetando caches da UI...")
+        self.cache_ui_text = [None] * self.num_slots
+        self.cache_ui_image = [None] * self.num_slots
+        self.cache_ui_size = [None] * self.num_slots
+        self.slot_ctk_images = [None] * self.num_slots
+        try:
+            self.update()
+        except:
+            pass
+
     def ao_fechar(self):
         # Para todas as gravações ativas
         for h in self.camera_handlers.values():
@@ -782,7 +800,7 @@ class CentralMonitoramento(ctk.CTk):
                 return
 
             # Lógica de Troca (Swap)
-            if 0 <= source_idx < 20 and 0 <= target_idx < 20:
+            if 0 <= source_idx < self.num_slots and 0 <= target_idx < self.num_slots:
                 ip_src = self.grid_cameras[source_idx]
                 ip_tgt = self.grid_cameras[target_idx]
 
@@ -828,7 +846,7 @@ class CentralMonitoramento(ctk.CTk):
         self.atualizar_botoes_controle()
 
     def selecionar_slot(self, index):
-        if not (0 <= index < 20): return
+        if not (0 <= index < self.num_slots): return
 
         # Desliga info de todos os handlers antes de trocar
         for ip_h, h in self.camera_handlers.items():
@@ -885,13 +903,17 @@ class CentralMonitoramento(ctk.CTk):
         except: pass
 
     def carregar_grid(self):
-        grid = ["0.0.0.0"] * 20
+        # Note: self.num_slots pode não estar definido ainda se carregar_grid for chamado antes
+        # Mas no __init__ ele é chamado depois de definir os arquivos, mas antes de num_slots.
+        # Vou mover num_slots para cima no __init__.
+        num_slots = getattr(self, 'num_slots', 20)
+        grid = ["0.0.0.0"] * num_slots
         if os.path.exists(self.arquivo_grid):
             try:
                 with open(self.arquivo_grid, "r", encoding='utf-8') as f:
                     dados = json.load(f)
                     if isinstance(dados, list):
-                        for i in range(min(len(dados), 20)):
+                        for i in range(min(len(dados), num_slots)):
                             if dados[i]: grid[i] = dados[i]
             except: pass
         return grid
@@ -906,7 +928,7 @@ class CentralMonitoramento(ctk.CTk):
         idx = self.slot_maximized if self.slot_maximized is not None else self.slot_selecionado
 
         # Se não houver IP no slot ou slot inválido, esconde botões
-        ip_atual = self.grid_cameras[idx] if (idx is not None and 0 <= idx < 20) else "0.0.0.0"
+        ip_atual = self.grid_cameras[idx] if (idx is not None and 0 <= idx < self.num_slots) else "0.0.0.0"
 
         handler = self.camera_handlers.get(ip_atual)
         is_rec = handler and handler != "CONECTANDO" and getattr(handler, 'gravando', False)
@@ -1204,7 +1226,7 @@ class CentralMonitoramento(ctk.CTk):
             return None
 
     def atribuir_ip_ao_slot(self, idx, ip, atualizar_ui=True, gerenciar_conexoes=True, salvar=True, forcado=False):
-        if not (0 <= idx < 20): return
+        if not (0 <= idx < self.num_slots): return
 
         # Limpa predefinição ao atribuir manualmente (se for uma atribuição direta, não via aplicar_predefinicao)
         # Note: 'aplicar_predefinicao' chama atribuir_ip_ao_slot com gerenciar_conexoes=False
@@ -1352,7 +1374,7 @@ class CentralMonitoramento(ctk.CTk):
 
             # Se a janela estiver minimizada, pula processamento pesado
             if self.state() == "iconic":
-                self.after(500, self.loop_exibicao)
+                self.after(200, self.loop_exibicao)
                 return
 
             # Atualiza botões de controle periodicamente para garantir responsividade e sincronia
@@ -1372,7 +1394,7 @@ class CentralMonitoramento(ctk.CTk):
 
             agora = time.time()
             scaling = self._window_scaling
-            indices_trabalho = [self.slot_maximized] if self.slot_maximized is not None else range(20)
+            indices_trabalho = [self.slot_maximized] if self.slot_maximized is not None else range(self.num_slots)
 
             # Mapeia quais IPs estão sendo processados para compartilhar frames se possível (IP -> PIL Image)
             current_ips_pil = {}
@@ -1385,7 +1407,7 @@ class CentralMonitoramento(ctk.CTk):
                 h_work = self.camera_handlers.get(ip_work)
                 if h_work and h_work != "CONECTANDO": h_work.ativo = True
 
-            for i in range(20):
+            for i in range(self.num_slots):
                 ip = self.grid_cameras[i]
 
                 # Verifica se houve timeout na gravação
@@ -1907,7 +1929,7 @@ class CentralMonitoramento(ctk.CTk):
                 self.ips_em_fila.add(ip)
 
         # 3. Atualiza os dados do grid primeiro (silenciosamente)
-        for i in range(20):
+        for i in range(self.num_slots):
             ip = predefinicao[i] if i < len(predefinicao) else "0.0.0.0"
             self.atribuir_ip_ao_slot(i, ip, atualizar_ui=False, gerenciar_conexoes=False, salvar=False, forcado=True)
 
