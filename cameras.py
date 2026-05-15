@@ -10,11 +10,102 @@ import queue
 import requests
 from requests.auth import HTTPDigestAuth
 # Configuração de baixa latência para OpenCV/FFMPEG
-os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp;stimeout;10000000;buffer_size;2048000;analyzeduration;100000;probesize;100000;fflags;discardcorrupt;max_delay;500000;reorder_queue_size;64;rtsp_flags;prefer_tcp;reconnect;1;reconnect_streamed;1;reconnect_at_eof;1;allowed_media_types;video"
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp;stimeout;3000000;buffer_size;2048000;analyzeduration;50000;probesize;50000;fflags;discardcorrupt;max_delay;500000;reorder_queue_size;16;rtsp_flags;prefer_tcp;reconnect;1;reconnect_streamed;1;reconnect_at_eof;1;allowed_media_types;video"
 cv2.setNumThreads(1)
 
 # Semáforo global para limitar conexões simultâneas (evita travamentos)
 sem_conexao = threading.Semaphore(30)
+
+def carregar_dados_sistema():
+    """Carrega as configurações do sistema via console antes da interface iniciar."""
+    print("="*50)
+    print("SISTEMA DE MONITORAMENTO ABI - INICIALIZANDO")
+    print("="*50)
+
+    user_dir = os.path.expanduser("~")
+    arquivos = {
+        "config": os.path.join(user_dir, "config_cameras_abi.json"),
+        "grid": os.path.join(user_dir, "grid_config_abi.json"),
+        "janela": os.path.join(user_dir, "config_janela_abi.json"),
+        "predefinicoes": os.path.join(user_dir, "predefinicoes_grid_abi.json"),
+        "ips": os.path.join(user_dir, "lista_ips_abi.json")
+    }
+
+    dados = {
+        "config": {},
+        "grid": ["0.0.0.0"] * 20,
+        "janela": {},
+        "predefinicoes": {},
+        "ips": []
+    }
+
+    # 1. IPs
+    print("CMD: Carregando lista de IPs...", end=" ")
+    if os.path.exists(arquivos["ips"]):
+        try:
+            with open(arquivos["ips"], "r", encoding='utf-8') as f:
+                dados["ips"] = json.load(f)
+            print(f"OK ({len(dados['ips'])} IPs)")
+        except: print("ERRO")
+    else:
+        # Gera lista padrão se não existir
+        base = ["192.168.7.2", "192.168.7.3", "192.168.7.4", "192.168.7.20", "192.168.7.21",
+                "192.168.7.22", "192.168.7.23", "192.168.7.24", "192.168.7.26", "192.168.7.27",
+                "192.168.7.31", "192.168.7.32", "192.168.7.33", "192.168.7.35", "192.168.7.37",
+                "192.168.7.39", "192.168.7.43", "192.168.7.78", "192.168.7.79", "192.168.7.81",
+                "192.168.7.89", "192.168.7.92", "192.168.7.94", "192.168.7.98", "192.168.7.99"]
+        base += [f"192.168.7.{i}" for i in range(100, 216)]
+        base += ["192.168.7.237", "192.168.7.246", "192.168.7.247", "192.168.7.248", "192.168.7.249",
+                 "192.168.7.250", "192.168.7.251", "192.168.7.252"]
+        dados["ips"] = sorted(list(set(base)), key=lambda x: [int(d) for d in x.split('.')])
+        print("PADRÃO")
+
+    # 2. Configurações (Nomes)
+    print("CMD: Carregando nomes das câmeras...", end=" ")
+    if os.path.exists(arquivos["config"]):
+        try:
+            with open(arquivos["config"], "r", encoding='utf-8') as f:
+                dados["config"] = json.load(f)
+            print("OK")
+        except: print("ERRO")
+    else: print("VAZIO")
+
+    # 3. Grid
+    print("CMD: Carregando layout do grid...", end=" ")
+    if os.path.exists(arquivos["grid"]):
+        try:
+            with open(arquivos["grid"], "r", encoding='utf-8') as f:
+                g = json.load(f)
+                if isinstance(g, list):
+                    for i in range(min(len(g), 20)): dados["grid"][i] = g[i]
+            print("OK")
+        except: print("ERRO")
+    else: print("PADRÃO")
+
+    # 4. Janela
+    print("CMD: Restaurando estado da janela...", end=" ")
+    if os.path.exists(arquivos["janela"]):
+        try:
+            with open(arquivos["janela"], "r") as f:
+                dados["janela"] = json.load(f)
+            print(f"OK ({dados['janela'].get('active_tab', 'Câmeras')})")
+        except: print("ERRO")
+    else: print("NOVA")
+
+    # 5. Predefinições
+    print("CMD: Carregando predefinições...", end=" ")
+    if os.path.exists(arquivos["predefinicoes"]):
+        try:
+            with open(arquivos["predefinicoes"], "r", encoding='utf-8') as f:
+                dados["predefinicoes"] = json.load(f)
+            print(f"OK ({len(dados['predefinicoes'])} itens)")
+        except: print("ERRO")
+    else: print("VAZIO")
+
+    print("="*50)
+    print("SISTEMA PRONTO. ABRINDO INTERFACE...")
+    print("="*50)
+    return dados
 
 # --- CLASSE DE VÍDEO OTIMIZADA ---
 class CameraHandler:
@@ -311,7 +402,7 @@ class CentralMonitoramento(ctk.CTk):
     TEXT_S = "#9E9E9E"
     GRAY_DARK = "#424242"
 
-    def __init__(self):
+    def __init__(self, dados_iniciais=None):
         super().__init__()
         print("SISTEMA: Inicializando interface...")
 
@@ -369,15 +460,28 @@ class CentralMonitoramento(ctk.CTk):
         self.ultima_predefinicao = None
         self.aba_ativa = "Câmeras"
         self.tamanho_preview = "Pequeno"
-        self.necessita_refresh_total = False
+        self.iconic_state = False
 
-        print("SISTEMA: Carregando configurações...")
-        self.carregar_posicao_janela()
-        self.predefinicoes = self.carregar_predefinicoes()
-        self.ips_unicos = self.carregar_lista_ips()
-        self.dados_cameras = self.carregar_config()
-        self.grid_cameras = self.carregar_grid()
-        print(f"SISTEMA: {len(self.ips_unicos)} IPs carregados.")
+        if dados_iniciais:
+            self.dados_cameras = dados_iniciais.get("config", {})
+            self.grid_cameras = dados_iniciais.get("grid", ["0.0.0.0"] * self.num_slots)
+            self.predefinicoes = dados_iniciais.get("predefinicoes", {})
+            self.ips_unicos = dados_iniciais.get("ips", [])
+
+            janela = dados_iniciais.get("janela", {})
+            geom = janela.get("geometry")
+            if geom: self.geometry(geom)
+            self.aba_ativa = janela.get("active_tab", "Câmeras")
+            self.ultima_predefinicao = janela.get("last_predefinicao") or janela.get("last_preset")
+            self.slot_selecionado = janela.get("slot_selecionado", 0)
+            self.tamanho_preview = janela.get("tamanho_preview", "Pequeno")
+        else:
+            print("SISTEMA: Carregando configurações...")
+            self.carregar_posicao_janela()
+            self.predefinicoes = self.carregar_predefinicoes()
+            self.ips_unicos = self.carregar_lista_ips()
+            self.dados_cameras = self.carregar_config()
+            self.grid_cameras = self.carregar_grid()
 
         # Cache persistente de CTkImage por slot para evitar "pyimage" explosion
         self.slot_ctk_images = [None] * self.num_slots
@@ -583,8 +687,8 @@ class CentralMonitoramento(ctk.CTk):
                 # Inicia a conexão real
                 threading.Thread(target=self._thread_conectar, args=(ip, canal), daemon=True).start()
 
-                # Pausa escalonada para não sobrecarregar o processador de threads e a rede
-                time.sleep(0.1)
+                # Pausa escalonada otimizada para rapidez sem sobrecarga
+                time.sleep(0.02)
 
             except Exception as e:
                 print(f"Erro no processador de conexões: {e}")
@@ -1386,7 +1490,7 @@ class CentralMonitoramento(ctk.CTk):
 
             # Se a janela estiver minimizada, pula processamento pesado
             if self.state() == "iconic":
-                self.after(200, self.loop_exibicao)
+                self.after(100, self.loop_exibicao)
                 return
 
             # Atualiza botões de controle periodicamente para garantir responsividade e sincronia
@@ -2098,5 +2202,6 @@ class CentralMonitoramento(ctk.CTk):
             self.abrir_modal_alerta("Erro", "Não foi possível obter um frame válido da câmera.")
 
 if __name__ == "__main__":
-    app = CentralMonitoramento()
+    dados_sistema = carregar_dados_sistema()
+    app = CentralMonitoramento(dados_iniciais=dados_sistema)
     app.mainloop()
