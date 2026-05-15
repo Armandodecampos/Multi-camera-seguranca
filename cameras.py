@@ -14,7 +14,7 @@ os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp;stimeout;30000
 cv2.setNumThreads(1)
 
 # Semáforo global para limitar conexões simultâneas (evita travamentos)
-sem_conexao = threading.Semaphore(30)
+sem_conexao = threading.Semaphore(20)
 
 def carregar_dados_sistema():
     """Carrega as configurações do sistema via console antes da interface iniciar."""
@@ -256,15 +256,11 @@ class CameraHandler:
                     continue
 
                 # Se a UI ainda não consumiu o frame anterior, e não é prioridade, podemos pular
+                # Se a UI ainda não consumiu o frame anterior, e não é prioridade, podemos pular
                 # Se estiver gravando, não pulamos a decodificação
                 if self.novo_frame and not self.prioridade and not self.gravando:
                     if now - last_process_time < 0.2:
                         continue
-
-                # Se a câmera não estiver ativa (visível), pulamos a decodificação e processamento pesado
-                # Exceto se estiver gravando, pois precisamos do frame decodificado para o VideoWriter
-                if not self.ativo and not self.gravando:
-                    continue
 
                 # Retrieve frame (decodifica)
                 ret_ret, frame = self.cap.retrieve()
@@ -687,7 +683,7 @@ class CentralMonitoramento(ctk.CTk):
                 # Inicia a conexão real
                 threading.Thread(target=self._thread_conectar, args=(ip, canal), daemon=True).start()
 
-                # Pausa escalonada otimizada para rapidez sem sobrecarga
+                # Pausa escalonada (User's original)
                 time.sleep(0.02)
 
             except Exception as e:
@@ -1472,26 +1468,30 @@ class CentralMonitoramento(ctk.CTk):
 
     def loop_exibicao(self):
         try:
-            # Verifica se houve sinalização de restauração da janela
-            if self.necessita_refresh_total:
+            # Lógica de restauração Snappy + Nuclear
+            is_iconic = self.state() == "iconic"
+            force_refresh = False
+
+            if is_iconic:
+                self.iconic_state = True
+                self.after(200, self.loop_exibicao)
+                return
+
+            if getattr(self, 'iconic_state', False):
+                # Acabou de restaurar
                 print("SISTEMA: Restaurando interface...")
-                self.cache_ui_text = [None] * self.num_slots
-                self.cache_ui_image = [None] * self.num_slots
-                self.cache_ui_size = [None] * self.num_slots
-                self.slot_ctk_images = [None] * self.num_slots
+                for i in range(self.num_slots):
+                    self.recriar_label_slot(i)
                 self.update_idletasks()
-                self.necessita_refresh_total = False
+                force_refresh = True
+
+            self.iconic_state = False
 
             # Atualiza o scaling da janela a cada 50 loops (aprox 1.5s) para economizar chamadas
             self._loop_counter += 1
             if self._loop_counter >= 50:
                 self._window_scaling = self._get_window_scaling()
                 self._loop_counter = 0
-
-            # Se a janela estiver minimizada, pula processamento pesado
-            if self.state() == "iconic":
-                self.after(100, self.loop_exibicao)
-                return
 
             # Atualiza botões de controle periodicamente para garantir responsividade e sincronia
             self.atualizar_botoes_controle()
@@ -1598,7 +1598,7 @@ class CentralMonitoramento(ctk.CTk):
 
                     # Verifica se já processamos este IP neste loop
                     pil_img = current_ips_pil.get(ip)
-                    if pil_img is None and handler.novo_frame:
+                    if pil_img is None and (handler.novo_frame or force_refresh):
                         pil_img = handler.pegar_frame()
                         if pil_img:
                             current_ips_pil[ip] = pil_img
