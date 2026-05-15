@@ -463,15 +463,27 @@ class CentralMonitoramento(ctk.CTk):
 
         if dados_iniciais:
             self.dados_cameras = dados_iniciais.get("config", {})
-            self.grid_cameras = dados_iniciais.get("grid", ["0.0.0.0"] * self.num_slots)
             self.predefinicoes = dados_iniciais.get("predefinicoes", {})
             self.ips_unicos = dados_iniciais.get("ips", [])
+
+            # Regra de Inicialização ABI:
+            # 1. Se houver predefinições, carrega a primeira da lista (ordem alfabética)
+            # 2. Se não houver, o grid começa totalmente vazio (sem conexões)
+            if self.predefinicoes:
+                nomes_ordenados = sorted(self.predefinicoes.keys(), key=str.lower)
+                primeira = nomes_ordenados[0]
+                self.grid_cameras = list(self.predefinicoes[primeira])
+                # Garante que tenha o número correto de slots
+                while len(self.grid_cameras) < self.num_slots: self.grid_cameras.append("0.0.0.0")
+                self.ultima_predefinicao = primeira
+            else:
+                self.grid_cameras = ["0.0.0.0"] * self.num_slots
+                self.ultima_predefinicao = None
 
             janela = dados_iniciais.get("janela", {})
             geom = janela.get("geometry")
             if geom: self.geometry(geom)
             self.aba_ativa = janela.get("active_tab", "Câmeras")
-            self.ultima_predefinicao = janela.get("last_predefinicao") or janela.get("last_preset")
             self.slot_selecionado = janela.get("slot_selecionado", 0)
             self.tamanho_preview = janela.get("tamanho_preview", "Pequeno")
         else:
@@ -480,7 +492,16 @@ class CentralMonitoramento(ctk.CTk):
             self.predefinicoes = self.carregar_predefinicoes()
             self.ips_unicos = self.carregar_lista_ips()
             self.dados_cameras = self.carregar_config()
-            self.grid_cameras = self.carregar_grid()
+
+            if self.predefinicoes:
+                nomes_ordenados = sorted(self.predefinicoes.keys(), key=str.lower)
+                primeira = nomes_ordenados[0]
+                self.grid_cameras = list(self.predefinicoes[primeira])
+                while len(self.grid_cameras) < self.num_slots: self.grid_cameras.append("0.0.0.0")
+                self.ultima_predefinicao = primeira
+            else:
+                self.grid_cameras = ["0.0.0.0"] * self.num_slots
+                self.ultima_predefinicao = None
 
         # Cache persistente de CTkImage por slot para evitar "pyimage" explosion
         self.slot_ctk_images = [None] * self.num_slots
@@ -620,17 +641,21 @@ class CentralMonitoramento(ctk.CTk):
 
         print("SISTEMA: Atualizando listas da UI...")
         self.atualizar_lista_cameras_ui()
-        # Restaura estado inicial
+
+        # Prepara visual inicial dos slots baseado na regra de predefinição
         for i, ip in enumerate(self.grid_cameras):
             if ip and ip != "0.0.0.0":
-                # O IP é ocultado por padrão se não selecionado
-                self.slot_labels[i].configure(text="AGUARDANDO")
+                txt = "CONECTANDO..." if i != self.slot_selecionado else f"CONECTANDO...\n{ip}"
+                self.slot_labels[i].configure(text=txt)
+            else:
+                self.slot_labels[i].configure(text=f"Espaço {i+1}")
 
         self.selecionar_slot(self.slot_selecionado)
         self.restaurar_grid()
 
         # Delay inicial: A interface carrega primeiro, as câmeras conectam depois
-        self.after(1000, self._iniciar_sistema_conexoes)
+        # Reduzido para 300ms para uma experiência mais "fluida"
+        self.after(300, self._iniciar_sistema_conexoes)
         print("SISTEMA: Pronto.")
         
         def safe_zoom():
@@ -646,9 +671,7 @@ class CentralMonitoramento(ctk.CTk):
                 self.tabview.set(self.aba_ativa)
         except: pass
 
-        # Aplica automaticamente o último predefinição se existir
-        if self.ultima_predefinicao and self.ultima_predefinicao in self.predefinicoes:
-            self.after(500, lambda: self.aplicar_predefinicao(self.ultima_predefinicao))
+        # A conexão inicial agora é gerenciada exclusivamente por _iniciar_sistema_conexoes
 
         self.last_button_state = None
         self._window_scaling = self._get_window_scaling()
@@ -658,7 +681,14 @@ class CentralMonitoramento(ctk.CTk):
     def _iniciar_sistema_conexoes(self):
         """Inicia o despachante de conexões sequenciais."""
         print("SISTEMA: Iniciando despachante de conexões...")
-        self.alternar_todos_streams()
+
+        # Se houver uma predefinição selecionada no __init__, inicia as conexões para ela
+        if self.ultima_predefinicao:
+            print(f"SISTEMA: Disparando conexões para predefinição: {self.ultima_predefinicao}")
+            self.aplicar_predefinicao(self.ultima_predefinicao)
+        else:
+            print("SISTEMA: Nenhuma predefinição encontrada. Grid vazio.")
+
         self._processar_fila_conexoes()
 
     def _processar_fila_conexoes(self):
@@ -679,7 +709,7 @@ class CentralMonitoramento(ctk.CTk):
                         del self.camera_handlers[ip]
 
             # Agenda o próximo processamento (sequencial e controlado)
-            self.after(100, self._processar_fila_conexoes)
+            self.after(50, self._processar_fila_conexoes)
         except Exception as e:
             self.after(500, self._processar_fila_conexoes)
 
@@ -799,7 +829,7 @@ class CentralMonitoramento(ctk.CTk):
                     geom = dados.get("geometry")
                     if geom: self.geometry(geom)
                     self.aba_ativa = dados.get("active_tab", "Câmeras")
-                    self.ultima_predefinicao = dados.get("last_predefinicao") or dados.get("last_preset")
+                    # self.ultima_predefinicao é agora definida pela regra de "primeira predefinição" no __init__
                     self.slot_selecionado = dados.get("slot_selecionado", 0)
                     self.tamanho_preview = dados.get("tamanho_preview", "Pequeno")
                     if self.tamanho_preview == "Médio":
@@ -1051,11 +1081,6 @@ class CentralMonitoramento(ctk.CTk):
                             if dados[i]: grid[i] = dados[i]
             except: pass
         return grid
-
-    def alternar_todos_streams(self):
-        for ip in set(self.grid_cameras):
-            if ip and ip != "0.0.0.0" and ip not in self.camera_handlers:
-                self.iniciar_conexao_assincrona(ip, 102)
 
     def atualizar_botoes_controle(self):
         # Decide qual slot deve conter os botões
