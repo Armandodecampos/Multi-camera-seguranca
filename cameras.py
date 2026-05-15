@@ -2107,11 +2107,6 @@ class CentralMonitoramento(ctk.CTk):
             except: pass
         self.ips_em_fila.clear()
 
-        # Reconstrói ips_em_fila com o que sobrou em camera_handlers como "CONECTANDO"
-        for ip, status in self.camera_handlers.items():
-            if status == "CONECTANDO":
-                self.ips_em_fila.add(ip)
-
         # 3. Atualiza os dados do grid primeiro (silenciosamente)
         for i in range(self.num_slots):
             ip = predefinicao[i] if i < len(predefinicao) else "0.0.0.0"
@@ -2119,14 +2114,19 @@ class CentralMonitoramento(ctk.CTk):
 
         self.salvar_grid()
 
-        # 4. Inicia conexões para os novos IPs que ainda não estão no handler
+        # 4. Inicia conexões para os novos IPs que ainda não estão no handler ou estão "travados"
         for ip in ips_novos_set:
-            if ip not in self.camera_handlers:
+            status = self.camera_handlers.get(ip)
+
+            if not status:
+                # Novo IP, dispara conexão
+                self.iniciar_conexao_assincrona(ip, self.obter_canal_alvo(ip))
+            elif status == "CONECTANDO":
+                # Já estava tentando, mas como limpamos a fila acima, precisamos re-enfileirar
                 self.iniciar_conexao_assincrona(ip, self.obter_canal_alvo(ip))
             else:
-                h = self.camera_handlers[ip]
-                if h != "CONECTANDO":
-                    h.set_canal(self.obter_canal_alvo(ip))
+                # Handler já existe e está rodando
+                status.set_canal(self.obter_canal_alvo(ip))
 
         # 5. Restaura layout se necessário e seleciona slot
         if self.slot_maximized is not None:
