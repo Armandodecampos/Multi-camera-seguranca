@@ -421,6 +421,10 @@ class CentralMonitoramento(ctk.CTk):
         self.bind("<Escape>", lambda event: self.sair_tela_cheia())
 
         # Binds para PTZ
+        self.bind("<MouseWheel>", self.ao_scroll_mouse)
+        self.bind("<Button-4>", self.ao_scroll_mouse)
+        self.bind("<Button-5>", self.ao_scroll_mouse)
+
         self.bind("<KeyPress-Up>", lambda e: self.comando_ptz("UP"))
         self.bind("<KeyPress-Down>", lambda e: self.comando_ptz("DOWN"))
         self.bind("<KeyPress-Left>", lambda e: self.comando_ptz("LEFT"))
@@ -460,6 +464,7 @@ class CentralMonitoramento(ctk.CTk):
         self.aba_ativa = "Câmeras"
         self.tamanho_preview = "Pequeno"
         self.iconic_state = False
+        self.zoom_stop_timer = None
 
         if dados_iniciais:
             self.dados_cameras = dados_iniciais.get("config", {})
@@ -635,6 +640,9 @@ class CentralMonitoramento(ctk.CTk):
             for widget in [frm, lbl]:
                 widget.bind("<Button-1>", lambda e, idx=i: self.ao_pressionar_slot(e, idx))
                 widget.bind("<ButtonRelease-1>", lambda e, idx=i: self.ao_soltar_slot(e, idx))
+                widget.bind("<MouseWheel>", self.ao_scroll_mouse)
+                widget.bind("<Button-4>", self.ao_scroll_mouse)
+                widget.bind("<Button-5>", self.ao_scroll_mouse)
 
             self.slot_frames.append(frm)
             self.slot_labels.append(lbl)
@@ -725,6 +733,30 @@ class CentralMonitoramento(ctk.CTk):
             self.sidebar_visible = True
 
     # --- LÓGICA PTZ ---
+    def ao_scroll_mouse(self, event):
+        direcao = None
+        if event.num == 4 or event.delta > 0:
+            direcao = "ZOOM_IN"
+        elif event.num == 5 or event.delta < 0:
+            direcao = "ZOOM_OUT"
+
+        if direcao:
+            self.comando_ptz(direcao)
+
+            # Cancela timer anterior se houver
+            if self.zoom_stop_timer:
+                self.after_cancel(self.zoom_stop_timer)
+                self.zoom_stop_timer = None
+
+            # Agenda parada do zoom após 300ms de inatividade
+            self.zoom_stop_timer = self.after(300, self._parar_zoom_automatico)
+
+        return "break" # Evita propagação de evento e duplicidade
+
+    def _parar_zoom_automatico(self):
+        self.comando_ptz("STOP")
+        self.zoom_stop_timer = None
+
     def comando_ptz(self, direcao):
         ip = self.ip_selecionado
         if not ip or ip == "0.0.0.0": return
@@ -736,11 +768,13 @@ class CentralMonitoramento(ctk.CTk):
             self.tecla_pressionada = None
 
         mapa = {
-            "UP": {"pan": 0, "tilt": 100},
-            "DOWN": {"pan": 0, "tilt": -100},
-            "LEFT": {"pan": -100, "tilt": 0},
-            "RIGHT": {"pan": 100, "tilt": 0},
-            "STOP": {"pan": 0, "tilt": 0}
+            "UP": {"pan": 0, "tilt": 100, "zoom": 0},
+            "DOWN": {"pan": 0, "tilt": -100, "zoom": 0},
+            "LEFT": {"pan": -100, "tilt": 0, "zoom": 0},
+            "RIGHT": {"pan": 100, "tilt": 0, "zoom": 0},
+            "ZOOM_IN": {"pan": 0, "tilt": 0, "zoom": 100},
+            "ZOOM_OUT": {"pan": 0, "tilt": 0, "zoom": -100},
+            "STOP": {"pan": 0, "tilt": 0, "zoom": 0}
         }
 
         valores = mapa.get(direcao)
@@ -748,6 +782,7 @@ class CentralMonitoramento(ctk.CTk):
         <PTZData xmlns="http://www.isapi.org/ver20/XMLSchema">
             <pan>{valores['pan']}</pan>
             <tilt>{valores['tilt']}</tilt>
+            <zoom>{valores['zoom']}</zoom>
         </PTZData>"""
 
         threading.Thread(target=self._enviar_request_ptz, args=(ip, xml_data), daemon=True).start()
@@ -1374,6 +1409,9 @@ class CentralMonitoramento(ctk.CTk):
             # Re-bind dos eventos
             lbl.bind("<Button-1>", lambda e, x=idx: self.ao_pressionar_slot(e, x))
             lbl.bind("<ButtonRelease-1>", lambda e, x=idx: self.ao_soltar_slot(e, x))
+            lbl.bind("<MouseWheel>", self.ao_scroll_mouse)
+            lbl.bind("<Button-4>", self.ao_scroll_mouse)
+            lbl.bind("<Button-5>", self.ao_scroll_mouse)
 
             self.slot_labels[idx] = lbl
             # Mantemos o objeto self.slot_ctk_images[idx] para evitar "pyimage" explosion
