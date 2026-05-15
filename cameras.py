@@ -261,12 +261,17 @@ class CameraHandler:
                     if now - last_process_time < 0.2:
                         continue
 
-                # Retrieve frame (decodifica)
+                # Retrieve frame (decodifica) - Mantemos o buffer limpo mesmo se não visível
                 ret_ret, frame = self.cap.retrieve()
                 if not ret_ret:
                     continue
 
                 last_process_time = now
+
+                # Se a câmera não estiver ativa (visível), pulamos o processamento visual pesado
+                # Mas o decoding acima garante que ao voltar, o stream esteja atualizado
+                if not self.ativo and not self.gravando:
+                    continue
 
                 # Lógica de Gravação
                 if self.gravando:
@@ -626,7 +631,7 @@ class CentralMonitoramento(ctk.CTk):
         self.restaurar_grid()
 
         # Delay inicial: A interface carrega primeiro, as câmeras conectam depois
-        self.after(300, self._iniciar_sistema_conexoes)
+        self.after(1000, self._iniciar_sistema_conexoes)
         print("SISTEMA: Pronto.")
         
         def safe_zoom():
@@ -652,42 +657,33 @@ class CentralMonitoramento(ctk.CTk):
         self.loop_exibicao()
 
     def _iniciar_sistema_conexoes(self):
-        """Inicia a thread de processamento e dispara as conexões iniciais."""
-        print("SISTEMA: Iniciando conexões com as câmeras...")
-        threading.Thread(target=self._processar_fila_conexoes_pendentes, daemon=True).start()
+        """Inicia o despachante de conexões sequenciais."""
+        print("SISTEMA: Iniciando despachante de conexões...")
         self.alternar_todos_streams()
+        self._processar_fila_conexoes()
 
-    def _processar_fila_conexoes_pendentes(self):
-        while True:
-            try:
-                # Usa timeout no get() para evitar busy-loop e melhorar a responsividade
-                try:
-                    ip, canal = self.fila_pendente_conexoes.get(timeout=0.1)
-                except queue.Empty:
-                    continue
-
+    def _processar_fila_conexoes(self):
+        """Processa a fila de conexões uma a uma para evitar sobrecarga e travamentos."""
+        try:
+            if not self.fila_pendente_conexoes.empty():
+                ip, canal = self.fila_pendente_conexoes.get_nowait()
                 self.ips_em_fila.discard(ip)
 
-                # Verifica se o IP ainda está no grid
-                if ip not in self.grid_cameras:
+                # Verifica relevância
+                if ip in self.grid_cameras:
+                    handler = self.camera_handlers.get(ip)
+                    if not (handler and handler != "CONECTANDO" and getattr(handler, 'rodando', False)):
+                        # Dispara a thread de conexão real para este IP específico
+                        threading.Thread(target=self._thread_conectar, args=(ip, canal), daemon=True).start()
+                else:
                     if self.camera_handlers.get(ip) == "CONECTANDO":
                         del self.camera_handlers[ip]
-                    continue
 
-                # Se já tiver um handler rodando, não faz nada
-                handler = self.camera_handlers.get(ip)
-                if handler and handler != "CONECTANDO" and getattr(handler, 'rodando', False):
-                    continue
-
-                # Inicia a conexão real
-                threading.Thread(target=self._thread_conectar, args=(ip, canal), daemon=True).start()
-
-                # Pausa escalonada (User's original)
-                time.sleep(0.02)
-
-            except Exception as e:
-                print(f"Erro no processador de conexões: {e}")
-                time.sleep(1)
+            # Agenda o próximo processamento (sequencial e controlado)
+            self.after(150, self._processar_fila_conexoes)
+        except Exception as e:
+            # print(f"Erro no despachante: {e}")
+            self.after(500, self._processar_fila_conexoes)
 
     # --- LÓGICA DO TOGGLE DA SIDEBAR ---
     def toggle_sidebar(self):
@@ -811,6 +807,27 @@ class CentralMonitoramento(ctk.CTk):
                     if self.tamanho_preview == "Médio":
                         self.tamanho_preview = "Grande"
             except Exception as e: print(f"Erro ao carregar janela: {e}")
+
+    def restaurar_layout_total(self):
+        """Re-aplica o layout principal para garantir que o Tkinter redesenhe tudo no Windows."""
+        # print("LOG: Forçando reconstrução do layout principal...")
+        try:
+            # Re-grid Sidebar
+            if getattr(self, 'sidebar_visible', True):
+                self.sidebar.grid(row=0, column=0, sticky="nsew")
+
+            # Re-grid Container Toggle
+            self.container_toggle.grid(row=0, column=1, sticky="ns")
+
+            # Re-grid Main Frame
+            if self.em_tela_cheia:
+                self.main_frame.grid_configure(row=0, column=0, columnspan=3, sticky="nsew")
+            else:
+                self.main_frame.grid_configure(row=0, column=2, sticky="nsew")
+
+            self.update_idletasks()
+        except Exception as e:
+            print(f"Erro ao restaurar layout total: {e}")
 
     def ao_restaurar(self, event=None):
         """Sinaliza que a UI necessita de um refresh total após restauração."""
@@ -1473,7 +1490,7 @@ class CentralMonitoramento(ctk.CTk):
 
             if is_iconic:
                 self.iconic_state = True
-                self.after(200, self.loop_exibicao)
+                self.after(500, self.loop_exibicao)
                 return
 
             # Verifica restauração por iconic_state ou por flag de evento <Map>
@@ -1483,7 +1500,11 @@ class CentralMonitoramento(ctk.CTk):
                 self.cache_ui_text = [None] * self.num_slots
                 self.cache_ui_image = [None] * self.num_slots
                 self.cache_ui_size = [None] * self.num_slots
-                self.update_idletasks()
+
+                # O 'update()' força o Tkinter a redesenhar buffers internos que podem estar corrompidos
+                try: self.update()
+                except: pass
+
                 force_refresh = True
                 self.necessita_refresh_total = False
 
