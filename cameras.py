@@ -9,6 +9,8 @@ import socket
 import queue
 import requests
 from requests.auth import HTTPDigestAuth
+import subprocess
+import platform
 # Configuração de baixa latência para OpenCV/FFMPEG
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp;stimeout;3000000;buffer_size;2048000;analyzeduration;50000;probesize;50000;fflags;discardcorrupt;max_delay;500000;reorder_queue_size;16;rtsp_flags;prefer_tcp;reconnect;1;reconnect_streamed;1;reconnect_at_eof;1;allowed_media_types;video"
 cv2.setNumThreads(1)
@@ -1220,7 +1222,7 @@ class CentralMonitoramento(ctk.CTk):
             # Parar Gravação
             handler.parar_gravacao()
             self.atualizar_botoes_controle()
-            self.abrir_modal_alerta("Sucesso", "Gravação finalizada e salva em Downloads.")
+            self.abrir_modal_alerta("Sucesso", "Gravação finalizada e salva em Downloads.", show_open_folder=True)
 
     def abrir_janela_configuracoes(self):
         modal = ctk.CTkToplevel(self)
@@ -1370,21 +1372,28 @@ class CentralMonitoramento(ctk.CTk):
                                 corner_radius=0, height=40, width=140, command=modal.destroy)
         btn_nao.pack(side="right", expand=True, padx=5)
 
-    def abrir_modal_alerta(self, titulo, mensagem):
+    def abrir_modal_alerta(self, titulo, mensagem, show_open_folder=False):
         modal = ctk.CTkToplevel(self)
         modal.title(titulo)
-        modal.geometry("400x180")
+
+        altura_modal = 230 if show_open_folder else 180
+        modal.geometry(f"400x{altura_modal}")
         modal.resizable(False, False)
         modal.attributes("-topmost", True)
 
         try:
             self.update_idletasks()
             x = self.winfo_x() + (self.winfo_width() // 2) - 200
-            y = self.winfo_y() + (self.winfo_height() // 2) - 90
+            y = self.winfo_y() + (self.winfo_height() // 2) - (altura_modal // 2)
             modal.geometry(f"+{x}+{y}")
         except: pass
 
         ctk.CTkLabel(modal, text=mensagem, font=("Roboto", 14, "bold"), text_color=self.TEXT_P, wraplength=320).pack(pady=(30, 20))
+
+        if show_open_folder:
+            btn_folder = ctk.CTkButton(modal, text="Abrir Local do Arquivo", fg_color=self.ACCENT_RED, hover_color=self.ACCENT_WINE,
+                                       corner_radius=0, height=40, command=lambda: [self.abrir_pasta_downloads(), modal.destroy()])
+            btn_folder.pack(fill="x", padx=60, pady=(0, 10))
 
         btn_ok = ctk.CTkButton(modal, text="OK", fg_color=self.GRAY_DARK, hover_color=self.TEXT_S,
                                corner_radius=0, height=40, command=modal.destroy)
@@ -1631,7 +1640,7 @@ class CentralMonitoramento(ctk.CTk):
                 if handler and handler != "CONECTANDO" and handler.timeout_atingido:
                     handler.timeout_atingido = False
                     nome = self.dados_cameras.get(ip, ip)
-                    self.abrir_modal_alerta("Gravação Finalizada", f"A gravação da câmera {nome} foi finalizada automaticamente após 10 minutos.")
+                    self.abrir_modal_alerta("Gravação Finalizada", f"A gravação da câmera {nome} foi finalizada automaticamente após 10 minutos.", show_open_folder=True)
 
                 # Caso o slot deva estar vazio ou não esteja no foco de atualização
                 if not ip or ip == "0.0.0.0" or i not in indices_trabalho:
@@ -2269,6 +2278,19 @@ class CentralMonitoramento(ctk.CTk):
             lbl.bind("<Button-1>", lambda e, n=nome: self.aplicar_predefinicao(n))
 
             self.predefinicao_widgets[nome] = frm
+
+    def abrir_pasta_downloads(self):
+        downloads_dir = os.path.join(os.path.expanduser("~"), "Downloads")
+        sistema = platform.system()
+        try:
+            if sistema == "Windows":
+                os.startfile(downloads_dir)
+            elif sistema == "Darwin":  # macOS
+                subprocess.Popen(["open", downloads_dir])
+            else:  # Linux e outros
+                subprocess.Popen(["xdg-open", downloads_dir])
+        except Exception as e:
+            print(f"Erro ao abrir pasta de downloads: {e}")
 
     # --- MÉTODOS DE SCREENSHOT ---
     def capturar_imagem(self):
