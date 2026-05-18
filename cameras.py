@@ -137,6 +137,7 @@ class CameraHandler:
         self.tempo_inicio_gravacao = 0
         self.timeout_atingido = False
         self.ativo = True
+        self.zoom_digital = 1.0
 
     def verificar_alcance(self, timeout=1.0):
         """Verifica se o IP e a porta RTSP (554) estão acessíveis."""
@@ -308,10 +309,22 @@ class CameraHandler:
                     w, h = self.tamanho_alvo
                     w, h = int(w), int(h)
 
-                    if frame.shape[1] != w or frame.shape[0] != h:
-                        frame_res = cv2.resize(frame, (w, h), interpolation=self.interpolation)
+                    # Aplicar Zoom Digital (Crop) se necessário
+                    if self.zoom_digital > 1.0:
+                        h_orig, w_orig = frame.shape[:2]
+                        # Calcula o tamanho da janela de crop
+                        cw = int(w_orig / self.zoom_digital)
+                        ch = int(h_orig / self.zoom_digital)
+                        # Centraliza o crop
+                        x1 = (w_orig - cw) // 2
+                        y1 = (h_orig - ch) // 2
+                        frame_cropped = frame[y1:y1+ch, x1:x1+cw]
+                        frame_res = cv2.resize(frame_cropped, (w, h), interpolation=self.interpolation)
                     else:
-                        frame_res = frame
+                        if frame.shape[1] != w or frame.shape[0] != h:
+                            frame_res = cv2.resize(frame, (w, h), interpolation=self.interpolation)
+                        else:
+                            frame_res = frame
 
                     # Adiciona Nome e IP para debug visual apenas se houver espaço e estiver habilitado
                     if h > 50:
@@ -742,6 +755,12 @@ class CentralMonitoramento(ctk.CTk):
         elif event.num == 5 or event.delta < 0:
             direcao = "ZOOM_OUT"
 
+        # Zoom Digital com CTRL + Scroll
+        if event.state & 0x0004: # Control Mask
+            if direcao:
+                self.executar_zoom_digital(event, direcao)
+            return "break"
+
         if direcao:
             self.comando_ptz(direcao)
 
@@ -758,6 +777,18 @@ class CentralMonitoramento(ctk.CTk):
     def _parar_zoom_automatico(self):
         self.comando_ptz("STOP")
         self.zoom_stop_timer = None
+
+    def executar_zoom_digital(self, event, direcao):
+        idx = self.encontrar_slot_por_coords(event.x_root, event.y_root)
+        if idx is not None:
+            ip = self.grid_cameras[idx]
+            handler = self.camera_handlers.get(ip)
+            if handler and handler != "CONECTANDO":
+                with handler.lock:
+                    if direcao == "ZOOM_IN":
+                        handler.zoom_digital = min(5.0, handler.zoom_digital + 0.1)
+                    else:
+                        handler.zoom_digital = max(1.0, handler.zoom_digital - 0.1)
 
     def comando_ptz(self, direcao):
         ip = self.ip_selecionado
