@@ -458,6 +458,12 @@ class CentralMonitoramento(ctk.CTk):
         self.bind("<KeyRelease-Left>", lambda e: self.comando_ptz("STOP"))
         self.bind("<KeyRelease-Right>", lambda e: self.comando_ptz("STOP"))
 
+        # Binds para Zoom Digital (Drag)
+        self.bind("<KeyPress-Control_L>", lambda e: self.config_cursor_agarrar(True))
+        self.bind("<KeyPress-Control_R>", lambda e: self.config_cursor_agarrar(True))
+        self.bind("<KeyRelease-Control_L>", lambda e: self.config_cursor_agarrar(False))
+        self.bind("<KeyRelease-Control_R>", lambda e: self.config_cursor_agarrar(False))
+
         # Configurações de Arquivos
         user_dir = os.path.expanduser("~")
         self.arquivo_config = os.path.join(user_dir, "config_cameras_abi.json")
@@ -663,6 +669,7 @@ class CentralMonitoramento(ctk.CTk):
             for widget in [frm, lbl]:
                 widget.bind("<Button-1>", lambda e, idx=i: self.ao_pressionar_slot(e, idx))
                 widget.bind("<ButtonRelease-1>", lambda e, idx=i: self.ao_soltar_slot(e, idx))
+                widget.bind("<B1-Motion>", lambda e, idx=i: self.ao_arrastar_slot(e, idx))
                 widget.bind("<MouseWheel>", self.ao_scroll_mouse)
                 widget.bind("<Button-4>", self.ao_scroll_mouse)
                 widget.bind("<Button-5>", self.ao_scroll_mouse)
@@ -785,6 +792,37 @@ class CentralMonitoramento(ctk.CTk):
     def _parar_zoom_automatico(self):
         self.comando_ptz("STOP")
         self.zoom_stop_timer = None
+
+    def config_cursor_agarrar(self, estado):
+        cursor = "fleur" if estado else ""
+        try: self.configure(cursor=cursor)
+        except: pass
+
+    def ao_arrastar_slot(self, event, index):
+        if not self.press_data: return
+
+        # Se CTRL estiver pressionado, arrasta o zoom
+        if event.state & 0x0004:
+            dx = event.x_root - self.press_data["x"]
+            dy = event.y_root - self.press_data["y"]
+
+            # Atualiza posição para o próximo frame de arrasto
+            self.press_data["x"] = event.x_root
+            self.press_data["y"] = event.y_root
+
+            ip = self.grid_cameras[index]
+            handler = self.camera_handlers.get(ip)
+            if handler and handler != "CONECTANDO" and handler.zoom_digital > 1.0:
+                frm = self.slot_frames[index]
+                # Normaliza o deslocamento baseado no zoom e tamanho do slot
+                # Invertemos o sinal porque arrastar a imagem para a direita move o centro do crop para a esquerda
+                shift_x = (dx / frm.winfo_width()) / handler.zoom_digital
+                shift_y = (dy / frm.winfo_height()) / handler.zoom_digital
+
+                with handler.lock:
+                    nx = max(0.0, min(1.0, handler.zoom_center[0] - shift_x))
+                    ny = max(0.0, min(1.0, handler.zoom_center[1] - shift_y))
+                    handler.zoom_center = (nx, ny)
 
     def executar_zoom_digital(self, event, direcao):
         idx = self.encontrar_slot_por_coords(event.x_root, event.y_root)
