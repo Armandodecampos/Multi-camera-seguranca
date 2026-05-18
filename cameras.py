@@ -138,6 +138,7 @@ class CameraHandler:
         self.timeout_atingido = False
         self.ativo = True
         self.zoom_digital = 1.0
+        self.zoom_center = (0.5, 0.5)
 
     def verificar_alcance(self, timeout=1.0):
         """Verifica se o IP e a porta RTSP (554) estão acessíveis."""
@@ -315,9 +316,16 @@ class CameraHandler:
                         # Calcula o tamanho da janela de crop
                         cw = int(w_orig / self.zoom_digital)
                         ch = int(h_orig / self.zoom_digital)
-                        # Centraliza o crop
-                        x1 = (w_orig - cw) // 2
-                        y1 = (h_orig - ch) // 2
+
+                        # Usa o centro definido pelo mouse
+                        cx, cy = self.zoom_center
+                        x_center = int(cx * w_orig)
+                        y_center = int(cy * h_orig)
+
+                        # Calcula coordenadas do crop e garante que está dentro da imagem
+                        x1 = max(0, min(w_orig - cw, x_center - cw // 2))
+                        y1 = max(0, min(h_orig - ch, y_center - ch // 2))
+
                         frame_cropped = frame[y1:y1+ch, x1:x1+cw]
                         frame_res = cv2.resize(frame_cropped, (w, h), interpolation=self.interpolation)
                     else:
@@ -781,10 +789,16 @@ class CentralMonitoramento(ctk.CTk):
     def executar_zoom_digital(self, event, direcao):
         idx = self.encontrar_slot_por_coords(event.x_root, event.y_root)
         if idx is not None:
+            frm = self.slot_frames[idx]
+            # Calcula posição relativa do mouse no slot (0.0 a 1.0)
+            rel_x = (event.x_root - frm.winfo_rootx()) / frm.winfo_width()
+            rel_y = (event.y_root - frm.winfo_rooty()) / frm.winfo_height()
+
             ip = self.grid_cameras[idx]
             handler = self.camera_handlers.get(ip)
             if handler and handler != "CONECTANDO":
                 with handler.lock:
+                    handler.zoom_center = (rel_x, rel_y)
                     if direcao == "ZOOM_IN":
                         handler.zoom_digital = min(5.0, handler.zoom_digital + 0.1)
                     else:
