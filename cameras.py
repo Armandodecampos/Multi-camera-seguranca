@@ -791,6 +791,28 @@ class CentralMonitoramento(ctk.CTk):
 
     # --- LÓGICA PTZ ---
     def ao_scroll_mouse(self, event):
+        # Verifica se o mouse está sobre a sidebar para rolar as listas
+        try:
+            if self.sidebar.winfo_viewable():
+                sx = self.sidebar.winfo_rootx()
+                sy = self.sidebar.winfo_rooty()
+                sw = self.sidebar.winfo_width()
+                sh = self.sidebar.winfo_height()
+
+                if sx <= event.x_root <= sx + sw and sy <= event.y_root <= sy + sh:
+                    aba = self.tabview.get()
+                    scroll_obj = self.scroll_frame if aba == "Câmeras" else self.scroll_predefinicoes
+                    canvas = getattr(scroll_obj, "_parent_canvas", None) or getattr(scroll_obj, "_canvas", None)
+                    if canvas:
+                        if event.num == 4: # Linux up
+                            canvas.yview_scroll(-1, "units")
+                        elif event.num == 5: # Linux down
+                            canvas.yview_scroll(1, "units")
+                        elif event.delta: # Windows/Mac
+                            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+                    return "break"
+        except: pass
+
         direcao = None
         if event.num == 4 or event.delta > 0:
             direcao = "ZOOM_IN"
