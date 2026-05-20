@@ -1514,6 +1514,7 @@ class CentralMonitoramento(ctk.CTk):
             # Re-bind dos eventos
             lbl.bind("<Button-1>", lambda e, x=idx: self.ao_pressionar_slot(e, x))
             lbl.bind("<ButtonRelease-1>", lambda e, x=idx: self.ao_soltar_slot(e, x))
+            lbl.bind("<B1-Motion>", lambda e, idx=idx: self.ao_arrastar_slot(e, idx))
             lbl.bind("<MouseWheel>", self.ao_scroll_mouse)
             lbl.bind("<Button-4>", self.ao_scroll_mouse)
             lbl.bind("<Button-5>", self.ao_scroll_mouse)
