@@ -459,10 +459,10 @@ class CentralMonitoramento(ctk.CTk):
         self.bind("<KeyRelease-Right>", lambda e: self.comando_ptz("STOP"))
 
         # Binds para Zoom Digital (Drag)
-        self.bind("<KeyPress-Control_L>", lambda e: self.config_cursor_agarrar(True))
-        self.bind("<KeyPress-Control_R>", lambda e: self.config_cursor_agarrar(True))
-        self.bind("<KeyRelease-Control_L>", lambda e: self.config_cursor_agarrar(False))
-        self.bind("<KeyRelease-Control_R>", lambda e: self.config_cursor_agarrar(False))
+        self.bind_all("<KeyPress-Control_L>", lambda e: self._atualizar_estado_ctrl(e, True))
+        self.bind_all("<KeyPress-Control_R>", lambda e: self._atualizar_estado_ctrl(e, True))
+        self.bind_all("<KeyRelease-Control_L>", lambda e: self._atualizar_estado_ctrl(e, False))
+        self.bind_all("<KeyRelease-Control_R>", lambda e: self._atualizar_estado_ctrl(e, False))
 
         # Configurações de Arquivos
         user_dir = os.path.expanduser("~")
@@ -494,6 +494,7 @@ class CentralMonitoramento(ctk.CTk):
         self.tamanho_preview = "Pequeno"
         self.iconic_state = False
         self.zoom_stop_timer = None
+        self.ctrl_pressionado = False
 
         if dados_iniciais:
             self.dados_cameras = dados_iniciais.get("config", {})
@@ -771,7 +772,7 @@ class CentralMonitoramento(ctk.CTk):
             direcao = "ZOOM_OUT"
 
         # Zoom Digital com CTRL + Scroll
-        if event.state & 0x0004: # Control Mask
+        if (event.state & 0x0004) or self.ctrl_pressionado: # Control Mask
             if direcao:
                 self.executar_zoom_digital(event, direcao)
             return "break"
@@ -793,6 +794,10 @@ class CentralMonitoramento(ctk.CTk):
         self.comando_ptz("STOP")
         self.zoom_stop_timer = None
 
+    def _atualizar_estado_ctrl(self, event, estado):
+        self.ctrl_pressionado = estado
+        self.config_cursor_agarrar(estado)
+
     def config_cursor_agarrar(self, estado):
         cursor = "fleur" if estado else ""
         try: self.configure(cursor=cursor)
@@ -801,15 +806,15 @@ class CentralMonitoramento(ctk.CTk):
     def ao_arrastar_slot(self, event, index):
         if not self.press_data: return
 
+        dx = event.x_root - self.press_data["x"]
+        dy = event.y_root - self.press_data["y"]
+
+        # Atualiza posição para o próximo frame de arrasto
+        self.press_data["x"] = event.x_root
+        self.press_data["y"] = event.y_root
+
         # Se CTRL estiver pressionado, arrasta o zoom
-        if event.state & 0x0004:
-            dx = event.x_root - self.press_data["x"]
-            dy = event.y_root - self.press_data["y"]
-
-            # Atualiza posição para o próximo frame de arrasto
-            self.press_data["x"] = event.x_root
-            self.press_data["y"] = event.y_root
-
+        if (event.state & 0x0004) or self.ctrl_pressionado:
             ip = self.grid_cameras[index]
             handler = self.camera_handlers.get(ip)
             if handler and handler != "CONECTANDO" and handler.zoom_digital > 1.0:
@@ -828,9 +833,17 @@ class CentralMonitoramento(ctk.CTk):
         idx = self.encontrar_slot_por_coords(event.x_root, event.y_root)
         if idx is not None:
             frm = self.slot_frames[idx]
-            # Calcula posição relativa do mouse no slot (0.0 a 1.0)
-            rel_x = (event.x_root - frm.winfo_rootx()) / frm.winfo_width()
-            rel_y = (event.y_root - frm.winfo_rooty()) / frm.winfo_height()
+
+            # Se algum botão do mouse estiver pressionado (1, 2 ou 3), centraliza o zoom
+            # Bitmask 0x0700: Button1 (0x0100), Button2 (0x0200), Button3 (0x0400)
+            if event.state & 0x0700:
+                rel_x, rel_y = 0.5, 0.5
+            else:
+                # Calcula posição relativa do mouse no slot (0.0 a 1.0)
+                fw = frm.winfo_width()
+                fh = frm.winfo_height()
+                rel_x = (event.x_root - frm.winfo_rootx()) / fw if fw > 0 else 0.5
+                rel_y = (event.y_root - frm.winfo_rooty()) / fh if fh > 0 else 0.5
 
             ip = self.grid_cameras[idx]
             handler = self.camera_handlers.get(ip)
