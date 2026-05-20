@@ -804,12 +804,14 @@ class CentralMonitoramento(ctk.CTk):
                     scroll_obj = self.scroll_frame if aba == "Câmeras" else self.scroll_predefinicoes
                     canvas = getattr(scroll_obj, "_parent_canvas", None) or getattr(scroll_obj, "_canvas", None)
                     if canvas:
+                        cur_y = canvas.yview()[0]
+                        step = 0.2 # Move 20% da lista por notch
                         if event.num == 4: # Linux up
-                            canvas.yview_scroll(-1, "pages")
+                            canvas.yview_moveto(cur_y - step)
                         elif event.num == 5: # Linux down
-                            canvas.yview_scroll(1, "pages")
+                            canvas.yview_moveto(cur_y + step)
                         elif event.delta: # Windows/Mac
-                            canvas.yview_scroll(int(-1 * (event.delta / 120)), "pages")
+                            canvas.yview_moveto(cur_y + (step * int(-1 * (event.delta / 120))))
                     return "break"
         except: pass
 
