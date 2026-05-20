@@ -805,11 +805,11 @@ class CentralMonitoramento(ctk.CTk):
                     canvas = getattr(scroll_obj, "_parent_canvas", None) or getattr(scroll_obj, "_canvas", None)
                     if canvas:
                         if event.num == 4: # Linux up
-                            canvas.yview_scroll(-1, "units")
+                            canvas.yview_scroll(-3, "units")
                         elif event.num == 5: # Linux down
-                            canvas.yview_scroll(1, "units")
+                            canvas.yview_scroll(3, "units")
                         elif event.delta: # Windows/Mac
-                            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+                            canvas.yview_scroll(int(-3 * (event.delta / 120)), "units")
                     return "break"
         except: pass
 
