@@ -805,7 +805,19 @@ class CentralMonitoramento(ctk.CTk):
                     canvas = getattr(scroll_obj, "_parent_canvas", None) or getattr(scroll_obj, "_canvas", None)
                     if canvas:
                         cur_y = canvas.yview()[0]
-                        step = 0.2 # Move 20% da lista por notch
+                        try:
+                            # Calcula o passo baseado na altura de um item (Frame + pady)
+                            itens = scroll_obj.winfo_children()
+                            if itens:
+                                item_h = itens[0].winfo_height() + 4
+                                bbox = canvas.bbox("all")
+                                total_h = bbox[3] if bbox else 1
+                                step = item_h / total_h if total_h > 0 else 0.05
+                            else:
+                                step = 0.05
+                        except:
+                            step = 0.05
+
                         if event.num == 4: # Linux up
                             canvas.yview_moveto(cur_y - step)
                         elif event.num == 5: # Linux down
