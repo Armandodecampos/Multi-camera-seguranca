@@ -753,6 +753,32 @@ class CentralMonitoramento(ctk.CTk):
             self.after(500, self._processar_fila_conexoes)
 
     # --- LÓGICA DO TOGGLE DA SIDEBAR ---
+    def exibir_fantasma_drag(self, x_root, y_root, texto):
+        """Exibe um label flutuante acompanhando o mouse durante o arrasto."""
+        if not hasattr(self, 'fantasma_drag') or self.fantasma_drag is None:
+            self.fantasma_drag = ctk.CTkLabel(
+                self,
+                text=texto,
+                fg_color=self.ACCENT_WINE,
+                text_color="white",
+                corner_radius=5,
+                padx=10,
+                pady=5,
+                font=("Roboto", 12, "bold")
+            )
+
+        # Ajusta posição para seguir o mouse com offset
+        x = x_root - self.winfo_rootx() + 20
+        y = y_root - self.winfo_rooty() + 20
+        self.fantasma_drag.place(x=x, y=y)
+        self.fantasma_drag.lift()
+
+    def fechar_fantasma_drag(self):
+        """Remove o label flutuante de arrasto."""
+        if hasattr(self, 'fantasma_drag') and self.fantasma_drag:
+            self.fantasma_drag.destroy()
+            self.fantasma_drag = None
+
     def toggle_sidebar(self):
         if self.sidebar_visible:
             self.sidebar.grid_forget()
@@ -815,6 +841,7 @@ class CentralMonitoramento(ctk.CTk):
 
         # Se CTRL estiver pressionado, arrasta o zoom
         if (event.state & 0x0004) or self.ctrl_pressionado:
+            self.fechar_fantasma_drag()
             ip = self.grid_cameras[index]
             handler = self.camera_handlers.get(ip)
             if handler and handler != "CONECTANDO" and handler.zoom_digital > 1.0:
@@ -828,6 +855,12 @@ class CentralMonitoramento(ctk.CTk):
                     nx = max(0.0, min(1.0, handler.zoom_center[0] - shift_x))
                     ny = max(0.0, min(1.0, handler.zoom_center[1] - shift_y))
                     handler.zoom_center = (nx, ny)
+        else:
+            # Arrasto de câmera para troca de posição
+            ip = self.grid_cameras[index]
+            if ip and ip != "0.0.0.0":
+                nome = self.dados_cameras.get(ip, ip)
+                self.exibir_fantasma_drag(event.x_root, event.y_root, nome)
 
     def executar_zoom_digital(self, event, direcao):
         idx = self.encontrar_slot_por_coords(event.x_root, event.y_root)
@@ -1076,16 +1109,28 @@ class CentralMonitoramento(ctk.CTk):
 
     def ao_pressionar_slot(self, event, index):
         self.selecionar_slot(index)
-        self.press_data = {"index": index, "x": event.x_root, "y": event.y_root}
+        self.press_data = {
+            "index": index,
+            "x": event.x_root,
+            "y": event.y_root,
+            "x_start": event.x_root,
+            "y_start": event.y_root
+        }
 
     def ao_soltar_slot(self, event, index):
         if not self.press_data: return
+        self.fechar_fantasma_drag()
+
         source_idx = self.press_data.get("index")
         if self.slot_maximized is not None or self.em_tela_cheia:
             self.press_data = None
             return
         try:
-            dist = ((event.x_root - self.press_data["x"])**2 + (event.y_root - self.press_data["y"])**2)**0.5
+            # Usa coordenadas iniciais para o cálculo de distância real do arrasto
+            x_start = self.press_data.get("x_start", self.press_data["x"])
+            y_start = self.press_data.get("y_start", self.press_data["y"])
+            dist = ((event.x_root - x_start)**2 + (event.y_root - y_start)**2)**0.5
+
             target_idx = self.encontrar_slot_por_coords(event.x_root, event.y_root)
 
             # Se for apenas um clique (distância pequena) ou soltou fora
@@ -1100,6 +1145,10 @@ class CentralMonitoramento(ctk.CTk):
             if 0 <= source_idx < self.num_slots and 0 <= target_idx < self.num_slots:
                 ip_src = self.grid_cameras[source_idx]
                 ip_tgt = self.grid_cameras[target_idx]
+
+                # Se ambos os slots estiverem vazios, não faz nada
+                if (not ip_src or ip_src == "0.0.0.0") and (not ip_tgt or ip_tgt == "0.0.0.0"):
+                    return
 
                 # Agora atualiza visualmente e gerencia handlers
                 # Note: 'atribuir_ip_ao_slot' agora gerencia 'ultima_predefinicao' internamente
@@ -1585,6 +1634,42 @@ class CentralMonitoramento(ctk.CTk):
                 if ip in self.cooldown_conexoes: del self.cooldown_conexoes[ip]
                 canal_alvo = self.obter_canal_alvo(ip)
                 self.iniciar_conexao_assincrona(ip, canal_alvo)
+
+    def ao_pressionar_sidebar(self, event, ip):
+        self.press_data = {
+            "ip": ip,
+            "x_start": event.x_root,
+            "y_start": event.y_root,
+            "x": event.x_root,
+            "y": event.y_root
+        }
+
+    def ao_arrastar_sidebar(self, event, ip):
+        if not self.press_data: return
+        nome = self.dados_cameras.get(ip, ip)
+        self.exibir_fantasma_drag(event.x_root, event.y_root, nome)
+
+    def ao_soltar_sidebar(self, event, ip):
+        if not self.press_data: return
+        self.fechar_fantasma_drag()
+
+        try:
+            x_start = self.press_data.get("x_start", event.x_root)
+            y_start = self.press_data.get("y_start", event.y_root)
+            dist = ((event.x_root - x_start)**2 + (event.y_root - y_start)**2)**0.5
+
+            # Se for apenas um clique (distância pequena), seleciona a câmera normalmente
+            if dist < 15:
+                self.selecionar_camera(ip)
+                return
+
+            # Se for um arrasto, tenta soltar no slot sob o mouse
+            target_idx = self.encontrar_slot_por_coords(event.x_root, event.y_root)
+            if target_idx is not None:
+                self.atribuir_ip_ao_slot(target_idx, ip)
+                self.selecionar_slot(target_idx)
+        finally:
+            self.press_data = None
 
     def selecionar_camera(self, ip):
         # Esta função é chamada ao clicar na lista lateral
@@ -2149,7 +2234,9 @@ class CentralMonitoramento(ctk.CTk):
                 widgets_para_bind.append(lbl_thumb)
 
             for widget in widgets_para_bind:
-                widget.bind("<Button-1>", lambda e, x=ip: self.selecionar_camera(x))
+                widget.bind("<Button-1>", lambda e, x=ip: self.ao_pressionar_sidebar(e, x))
+                widget.bind("<B1-Motion>", lambda e, x=ip: self.ao_arrastar_sidebar(e, x))
+                widget.bind("<ButtonRelease-1>", lambda e, x=ip: self.ao_soltar_sidebar(e, x))
                 widget.configure(cursor="hand2")
 
             self.botoes_referencia[ip] = {'frame': frm, 'lbl_nome': lbl_nome, 'lbl_ip': lbl_ip}
