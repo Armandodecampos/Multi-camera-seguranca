@@ -519,7 +519,13 @@ class CentralMonitoramento(ctk.CTk):
             if self.predefinicoes:
                 nomes_ordenados = sorted(self.predefinicoes.keys(), key=str.lower)
                 primeira = nomes_ordenados[0]
-                self.grid_cameras = list(self.predefinicoes[primeira])
+                dados_primeira = self.predefinicoes[primeira]
+
+                if isinstance(dados_primeira, dict):
+                    self.grid_cameras = list(dados_primeira.get("grid_cameras", ["0.0.0.0"] * 20))
+                else:
+                    self.grid_cameras = list(dados_primeira)
+
                 # Garante que tenha o número correto de slots
                 while len(self.grid_cameras) < self.num_slots: self.grid_cameras.append("0.0.0.0")
                 self.ultima_predefinicao = primeira
@@ -543,7 +549,13 @@ class CentralMonitoramento(ctk.CTk):
             if self.predefinicoes:
                 nomes_ordenados = sorted(self.predefinicoes.keys(), key=str.lower)
                 primeira = nomes_ordenados[0]
-                self.grid_cameras = list(self.predefinicoes[primeira])
+                dados_primeira = self.predefinicoes[primeira]
+
+                if isinstance(dados_primeira, dict):
+                    self.grid_cameras = list(dados_primeira.get("grid_cameras", ["0.0.0.0"] * 20))
+                else:
+                    self.grid_cameras = list(dados_primeira)
+
                 while len(self.grid_cameras) < self.num_slots: self.grid_cameras.append("0.0.0.0")
                 self.ultima_predefinicao = primeira
             else:
@@ -1772,8 +1784,11 @@ class CentralMonitoramento(ctk.CTk):
                 except: pass
 
             # Cria o novo label
-            lbl = ctk.CTkLabel(frm, text=f"Espaço {idx+1}", corner_radius=0)
+            ip = self.grid_cameras[idx]
+            bg_color = "#000000" if not ip or ip == "0.0.0.0" else self.BG_SIDEBAR
+            lbl = ctk.CTkLabel(frm, text=f"Espaço {idx+1}", corner_radius=0, fg_color=bg_color)
             lbl.pack(expand=True, fill="both", padx=2, pady=2)
+            frm.configure(fg_color=bg_color)
 
             # Re-bind dos eventos
             lbl.bind("<Button-1>", lambda e, x=idx: self.ao_pressionar_slot(e, x))
@@ -1817,12 +1832,15 @@ class CentralMonitoramento(ctk.CTk):
         # Só mostra IP se for o slot selecionado
         if not ip or ip == "0.0.0.0":
             txt = f"Espaço {idx+1}"
+            bg_color = "#000000"
         else:
             txt = f"CONECTANDO...\n{ip}" if idx == self.slot_selecionado else "CONECTANDO..."
+            bg_color = self.BG_SIDEBAR
 
         try:
             # Tenta configurar o label existente
-            self.slot_labels[idx].configure(image=self.img_vazia, text=txt)
+            self.slot_frames[idx].configure(fg_color=bg_color)
+            self.slot_labels[idx].configure(image=self.img_vazia, text=txt, fg_color=bg_color)
             self.slot_labels[idx].image = self.img_vazia
             self.cache_ui_text[idx] = txt
             self.cache_ui_image[idx] = self.img_vazia
@@ -2558,13 +2576,18 @@ class CentralMonitoramento(ctk.CTk):
                     self.virtual_grid[(r, c)] = v
                 except: pass
 
-            predefinicao_ips = dados.get("grid_cameras", ["0.0.0.0"] * 20)
+            # Reconstrói grid_cameras (o viewport salvo)
+            predefinicao_ips = []
+            for i in range(self.num_slots):
+                r, c = i // 5, i % 5
+                ip = self.virtual_grid.get((r + self.offset_y, c + self.offset_x), "0.0.0.0")
+                predefinicao_ips.append(ip)
         else:
             # Legado (Apenas Lista de IPs)
             self.offset_x = 0
             self.offset_y = 0
             self.virtual_grid = {}
-            predefinicao_ips = dados
+            predefinicao_ips = list(dados)
             # Semeia virtual_grid legado
             for i, ip in enumerate(predefinicao_ips):
                 r, c = i // 5, i % 5
@@ -2579,14 +2602,14 @@ class CentralMonitoramento(ctk.CTk):
         # 1. Identifica quais IPs devem ser mantidos e quais devem ser fechados
         ips_novos_set = set(ip for ip in predefinicao_ips if ip and ip != "0.0.0.0")
 
+        # Fecha handlers de câmeras que NÃO estão no novo viewport
         for ip_h in list(self.camera_handlers.keys()):
             if ip_h not in ips_novos_set:
                 h = self.camera_handlers[ip_h]
                 if h != "CONECTANDO":
                     try: h.parar()
                     except: pass
-                if ip_h not in ips_novos_set:
-                    del self.camera_handlers[ip_h]
+                del self.camera_handlers[ip_h]
 
         # 2. Limpa filas e estados de conexão pendente
         while not self.fila_pendente_conexoes.empty():
@@ -2594,12 +2617,8 @@ class CentralMonitoramento(ctk.CTk):
             except: pass
         self.ips_em_fila.clear()
 
-        # 3. Atualiza os dados do grid primeiro (silenciosamente)
-        # Note: 'atualizar_viewport_grid' será chamado ao final para garantir consistência
-        for i in range(self.num_slots):
-            ip = predefinicao_ips[i] if i < len(predefinicao_ips) else "0.0.0.0"
-            self.atribuir_ip_ao_slot(i, ip, atualizar_ui=False, gerenciar_conexoes=False, salvar=False, forcado=True)
-
+        # 3. Atualiza os dados do grid e UI chamando atualizar_viewport_grid
+        # Isso garante que grid_cameras e virtual_grid fiquem perfeitamente sincronizados
         self.atualizar_viewport_grid(salvar=True)
 
         # 4. Inicia conexões para os novos IPs que ainda não estão no handler ou estão "travados"
