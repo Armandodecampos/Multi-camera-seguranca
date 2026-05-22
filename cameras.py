@@ -2522,22 +2522,53 @@ class CentralMonitoramento(ctk.CTk):
         self.abrir_modal_input("Salvar Predefinição", "Digite um nome para esta predefinição:", on_name_entered)
 
     def _salvar_predefinicao(self, nome):
-        self.predefinicoes[nome] = list(self.grid_cameras)
+        # Converte chaves de tupla para strings "r,c" para salvar no JSON da predefinição
+        vg_serializable = {f"{r},{c}": ip for (r, c), ip in self.virtual_grid.items()}
+
+        # Salva o estado completo do grid virtual
+        dados_predefinicao = {
+            "grid_cameras": list(self.grid_cameras),
+            "virtual_grid": vg_serializable,
+            "offset_x": self.offset_x,
+            "offset_y": self.offset_y
+        }
+
+        self.predefinicoes[nome] = dados_predefinicao
         self.ultima_predefinicao = nome
         self.salvar_predefinicoes()
         self.atualizar_lista_predefinicoes_ui()
 
     def aplicar_predefinicao(self, nome):
-        predefinicao = self.predefinicoes.get(nome)
-        if not predefinicao: return
+        dados = self.predefinicoes.get(nome)
+        if not dados: return
 
         # Limpa o cooldown para permitir reconexão imediata se for uma predefinicao
         self.cooldown_conexoes.clear()
 
-        # Reseta Viewport ao aplicar predefinição
-        self.offset_x = 0
-        self.offset_y = 0
-        self.virtual_grid = {}
+        if isinstance(dados, dict):
+            # Novo formato (Estado Completo)
+            self.offset_x = dados.get("offset_x", 0)
+            self.offset_y = dados.get("offset_y", 0)
+
+            vg_data = dados.get("virtual_grid", {})
+            self.virtual_grid = {}
+            for k, v in vg_data.items():
+                try:
+                    r, c = map(int, k.split(','))
+                    self.virtual_grid[(r, c)] = v
+                except: pass
+
+            predefinicao_ips = dados.get("grid_cameras", ["0.0.0.0"] * 20)
+        else:
+            # Legado (Apenas Lista de IPs)
+            self.offset_x = 0
+            self.offset_y = 0
+            self.virtual_grid = {}
+            predefinicao_ips = dados
+            # Semeia virtual_grid legado
+            for i, ip in enumerate(predefinicao_ips):
+                r, c = i // 5, i % 5
+                self.virtual_grid[(r, c)] = ip
 
         # Gerencia cores na lista de predefinicoes
         if self.ultima_predefinicao:
@@ -2546,7 +2577,7 @@ class CentralMonitoramento(ctk.CTk):
         self.pintar_predefinicao(nome, self.ACCENT_WINE)
 
         # 1. Identifica quais IPs devem ser mantidos e quais devem ser fechados
-        ips_novos_set = set(ip for ip in predefinicao if ip and ip != "0.0.0.0")
+        ips_novos_set = set(ip for ip in predefinicao_ips if ip and ip != "0.0.0.0")
 
         for ip_h in list(self.camera_handlers.keys()):
             if ip_h not in ips_novos_set:
@@ -2554,7 +2585,8 @@ class CentralMonitoramento(ctk.CTk):
                 if h != "CONECTANDO":
                     try: h.parar()
                     except: pass
-                del self.camera_handlers[ip_h]
+                if ip_h not in ips_novos_set:
+                    del self.camera_handlers[ip_h]
 
         # 2. Limpa filas e estados de conexão pendente
         while not self.fila_pendente_conexoes.empty():
@@ -2563,11 +2595,12 @@ class CentralMonitoramento(ctk.CTk):
         self.ips_em_fila.clear()
 
         # 3. Atualiza os dados do grid primeiro (silenciosamente)
+        # Note: 'atualizar_viewport_grid' será chamado ao final para garantir consistência
         for i in range(self.num_slots):
-            ip = predefinicao[i] if i < len(predefinicao) else "0.0.0.0"
+            ip = predefinicao_ips[i] if i < len(predefinicao_ips) else "0.0.0.0"
             self.atribuir_ip_ao_slot(i, ip, atualizar_ui=False, gerenciar_conexoes=False, salvar=False, forcado=True)
 
-        self.salvar_grid()
+        self.atualizar_viewport_grid(salvar=True)
 
         # 4. Inicia conexões para os novos IPs que ainda não estão no handler ou estão "travados"
         for ip in ips_novos_set:
