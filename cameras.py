@@ -2628,7 +2628,18 @@ class CentralMonitoramento(ctk.CTk):
                                      lambda: self._sobrescrever_predefinicao(nome))
 
     def _sobrescrever_predefinicao(self, nome):
-        self.predefinicoes[nome] = list(self.grid_cameras)
+        # Converte chaves de tupla para strings "r,c" para salvar no JSON da predefinição
+        vg_serializable = {f"{r},{c}": ip for (r, c), ip in self.virtual_grid.items()}
+
+        # Salva o estado completo do grid virtual
+        dados_predefinicao = {
+            "grid_cameras": list(self.grid_cameras),
+            "virtual_grid": vg_serializable,
+            "offset_x": self.offset_x,
+            "offset_y": self.offset_y
+        }
+
+        self.predefinicoes[nome] = dados_predefinicao
         self.salvar_predefinicoes()
         self.ultima_predefinicao = nome
         self.atualizar_lista_predefinicoes_ui()
