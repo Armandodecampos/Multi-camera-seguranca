@@ -1317,10 +1317,10 @@ class CentralMonitoramento(ctk.CTk):
         novo_ox = self.offset_x
         novo_oy = self.offset_y
 
-        if direcao == "RIGHT": novo_ox -= 1
-        elif direcao == "LEFT": novo_ox += 1
-        elif direcao == "UP": novo_oy += 1
-        elif direcao == "DOWN": novo_oy -= 1
+        if direcao == "RIGHT": novo_ox += 1
+        elif direcao == "LEFT": novo_ox -= 1
+        elif direcao == "UP": novo_oy -= 1
+        elif direcao == "DOWN": novo_oy += 1
         else: return
 
         # Regra de Movimentação ABI:
