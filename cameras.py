@@ -78,7 +78,14 @@ def carregar_dados_sistema():
         try:
             with open(arquivos["grid"], "r", encoding='utf-8') as f:
                 g = json.load(f)
-                if isinstance(g, list):
+                if isinstance(g, dict):
+                    # Novo formato (Viewport)
+                    # Extraímos o grid_cameras (o que era visível no momento do salvamento)
+                    if "grid_cameras" in g:
+                        dados["grid"] = g["grid_cameras"]
+                    dados["grid_full"] = g # Mantém o objeto completo para o __init__
+                elif isinstance(g, list):
+                    # Legado
                     for i in range(min(len(g), 20)): dados["grid"][i] = g[i]
             print("OK")
         except: print("ERRO")
@@ -496,6 +503,11 @@ class CentralMonitoramento(ctk.CTk):
         self.zoom_stop_timer = None
         self.ctrl_pressionado = False
 
+        # Grid Virtual e Viewport
+        self.virtual_grid = {}
+        self.offset_x = 0
+        self.offset_y = 0
+
         if dados_iniciais:
             self.dados_cameras = dados_iniciais.get("config", {})
             self.predefinicoes = dados_iniciais.get("predefinicoes", {})
@@ -537,6 +549,24 @@ class CentralMonitoramento(ctk.CTk):
             else:
                 self.grid_cameras = ["0.0.0.0"] * self.num_slots
                 self.ultima_predefinicao = None
+
+        # Se houver dados completos do grid (novo formato), aplica agora
+        if dados_iniciais and "grid_full" in dados_iniciais:
+            g = dados_iniciais["grid_full"]
+            self.offset_x = g.get("offset_x", 0)
+            self.offset_y = g.get("offset_y", 0)
+            vg_data = g.get("virtual_grid", {})
+            self.virtual_grid = {}
+            for k, v in vg_data.items():
+                try:
+                    r, c = map(int, k.split(','))
+                    self.virtual_grid[(r, c)] = v
+                except: pass
+        else:
+            # Semeia o grid virtual inicial com base no grid_cameras carregado (Legado ou Sem Predefinição)
+            for i, ip in enumerate(self.grid_cameras):
+                r, c = i // 5, i % 5
+                self.virtual_grid[(r, c)] = ip
 
         # Cache persistente de CTkImage por slot para evitar "pyimage" explosion
         self.slot_ctk_images = [None] * self.num_slots
@@ -657,6 +687,20 @@ class CentralMonitoramento(ctk.CTk):
                                               corner_radius=0, command=self.abrir_menu_opcoes)
 
         self.slot_frames = []
+        # Botões de Navegação do Grid
+        self.btn_nav_up = ctk.CTkButton(self.grid_frame, text="▲", width=40, height=40, corner_radius=20,
+                                        fg_color=self.ACCENT_RED, hover_color=self.ACCENT_WINE,
+                                        command=lambda: self.navegar_grid("UP"))
+        self.btn_nav_down = ctk.CTkButton(self.grid_frame, text="▼", width=40, height=40, corner_radius=20,
+                                          fg_color=self.ACCENT_RED, hover_color=self.ACCENT_WINE,
+                                          command=lambda: self.navegar_grid("DOWN"))
+        self.btn_nav_left = ctk.CTkButton(self.grid_frame, text="◀", width=40, height=40, corner_radius=20,
+                                          fg_color=self.ACCENT_RED, hover_color=self.ACCENT_WINE,
+                                          command=lambda: self.navegar_grid("LEFT"))
+        self.btn_nav_right = ctk.CTkButton(self.grid_frame, text="▶", width=40, height=40, corner_radius=20,
+                                           fg_color=self.ACCENT_RED, hover_color=self.ACCENT_WINE,
+                                           command=lambda: self.navegar_grid("RIGHT"))
+
         self.slot_labels = []
         for i in range(self.num_slots):
             row, col = i // 5, i % 5
@@ -1227,6 +1271,94 @@ class CentralMonitoramento(ctk.CTk):
         self.slot_maximized = None
         self.atualizar_botoes_controle()
 
+    def atualizar_viewport_grid(self, salvar=True):
+        """Atualiza os 20 slots do grid com base na posição do viewport (offset_x, offset_y)."""
+        ips_antes = set(ip for ip in self.grid_cameras if ip and ip != "0.0.0.0")
+
+        # 1. Atualiza IPs no grid_cameras
+        novos_ips = []
+        for i in range(self.num_slots):
+            r, c = i // 5, i % 5
+            ip = self.virtual_grid.get((r + self.offset_y, c + self.offset_x), "0.0.0.0")
+            novos_ips.append(ip)
+            # Atualiza visual e dados sem disparar conexões ainda
+            self.atribuir_ip_ao_slot(i, ip, atualizar_ui=False, gerenciar_conexoes=False, salvar=False, forcado=True)
+
+        # 2. Gerencia conexões baseadas na mudança de visibilidade
+        ips_depois = set(ip for ip in novos_ips if ip and ip != "0.0.0.0")
+
+        # Para câmeras que saíram do viewport
+        for ip in ips_antes:
+            if ip not in ips_depois:
+                handler = self.camera_handlers.get(ip)
+                if handler and handler != "CONECTANDO":
+                    try: handler.parar()
+                    except: pass
+                if ip in self.camera_handlers:
+                    del self.camera_handlers[ip]
+
+        # Inicia câmeras que entraram no viewport
+        for ip in ips_depois:
+            if ip not in self.camera_handlers:
+                canal = self.obter_canal_alvo(ip)
+                self.iniciar_conexao_assincrona(ip, canal)
+
+        if salvar:
+            self.salvar_grid()
+
+        self.atualizar_botoes_controle()
+        self.update_idletasks()
+
+    def navegar_grid(self, direcao):
+        """Move o viewport do grid na direção especificada, se válido."""
+        # Se algum slot estiver maximizado, não permite navegar (opcional, mas recomendado)
+        if self.slot_maximized is not None: return
+
+        novo_ox = self.offset_x
+        novo_oy = self.offset_y
+
+        if direcao == "RIGHT": novo_ox -= 1
+        elif direcao == "LEFT": novo_ox += 1
+        elif direcao == "UP": novo_oy += 1
+        elif direcao == "DOWN": novo_oy -= 1
+        else: return
+
+        # Regra de Movimentação ABI:
+        # Só é possível movimentar se o novo viewport tiver pelo menos uma câmera
+        # OU se for a PRIMEIRA vez entrando no vazio naquela direção.
+
+        # Verifica se o novo viewport tem câmeras
+        tem_camera = False
+        for r in range(4):
+            for c in range(5):
+                ip = self.virtual_grid.get((r + novo_oy, c + novo_ox), "0.0.0.0")
+                if ip and ip != "0.0.0.0":
+                    tem_camera = True
+                    break
+            if tem_camera: break
+
+        # "Só sera possivel movimentar mais de uma vez se tiver pelo menos uma camera no espaço revelado."
+        # Se o viewport ATUAL já está vazio na direção que o usuário está tentando ir, e o NOVO também será vazio, bloqueia.
+        # Mas vamos simplificar: se o novo viewport estiver vazio, só permitimos se o ATUAL tivesse pelo menos uma câmera.
+
+        foi_vazio = True
+        for r in range(4):
+            for c in range(5):
+                ip_atual = self.virtual_grid.get((r + self.offset_y, c + self.offset_x), "0.0.0.0")
+                if ip_atual and ip_atual != "0.0.0.0":
+                    foi_vazio = False
+                    break
+            if not foi_vazio: break
+
+        if not tem_camera and foi_vazio:
+            # Já estávamos no vazio e tentando ir mais fundo no vazio
+            return
+
+        # Aplica movimento
+        self.offset_x = novo_ox
+        self.offset_y = novo_oy
+        self.atualizar_viewport_grid()
+
     def selecionar_slot(self, index):
         if not (0 <= index < self.num_slots): return
 
@@ -1280,24 +1412,55 @@ class CentralMonitoramento(ctk.CTk):
 
     def salvar_grid(self):
         try:
+            # Converte chaves de tupla para strings "r,c" para JSON
+            vg_serializable = {f"{r},{c}": ip for (r, c), ip in self.virtual_grid.items()}
+
+            dados = {
+                "offset_x": self.offset_x,
+                "offset_y": self.offset_y,
+                "virtual_grid": vg_serializable,
+                "grid_cameras": self.grid_cameras # Mantém por compatibilidade ou redundância
+            }
+
             with open(self.arquivo_grid, "w", encoding='utf-8') as f:
-                json.dump(self.grid_cameras, f, ensure_ascii=False, indent=4)
-        except: pass
+                json.dump(dados, f, ensure_ascii=False, indent=4)
+        except Exception as e:
+            print(f"Erro ao salvar grid: {e}")
 
     def carregar_grid(self):
-        # Note: self.num_slots pode não estar definido ainda se carregar_grid for chamado antes
-        # Mas no __init__ ele é chamado depois de definir os arquivos, mas antes de num_slots.
-        # Vou mover num_slots para cima no __init__.
         num_slots = getattr(self, 'num_slots', 20)
         grid = ["0.0.0.0"] * num_slots
+
         if os.path.exists(self.arquivo_grid):
             try:
                 with open(self.arquivo_grid, "r", encoding='utf-8') as f:
                     dados = json.load(f)
-                    if isinstance(dados, list):
+
+                    if isinstance(dados, dict):
+                        self.offset_x = dados.get("offset_x", 0)
+                        self.offset_y = dados.get("offset_y", 0)
+
+                        vg_data = dados.get("virtual_grid", {})
+                        self.virtual_grid = {}
+                        for k, v in vg_data.items():
+                            try:
+                                r, c = map(int, k.split(','))
+                                self.virtual_grid[(r, c)] = v
+                            except: pass
+
+                        # Reconstrói grid_cameras (o viewport atual)
+                        for i in range(num_slots):
+                            r, c = i // 5, i % 5
+                            grid[i] = self.virtual_grid.get((r + self.offset_y, c + self.offset_x), "0.0.0.0")
+
+                    elif isinstance(dados, list):
+                        # Legado
                         for i in range(min(len(dados), num_slots)):
                             if dados[i]: grid[i] = dados[i]
-            except: pass
+                            r, c = i // 5, i % 5
+                            self.virtual_grid[(r, c)] = grid[i]
+            except Exception as e:
+                print(f"Erro ao carregar grid: {e}")
         return grid
 
     def atualizar_botoes_controle(self):
@@ -1316,6 +1479,22 @@ class CentralMonitoramento(ctk.CTk):
         if current_state == getattr(self, 'last_button_state', None):
             return
         self.last_button_state = current_state
+
+        # Controle de visibilidade dos botões de navegação
+        if is_max:
+            self.btn_nav_up.place_forget()
+            self.btn_nav_down.place_forget()
+            self.btn_nav_left.place_forget()
+            self.btn_nav_right.place_forget()
+        else:
+            self.btn_nav_up.place(relx=0.5, rely=0.02, anchor="n")
+            self.btn_nav_down.place(relx=0.5, rely=0.98, anchor="s")
+            self.btn_nav_left.place(relx=0.01, rely=0.5, anchor="w")
+            self.btn_nav_right.place(relx=0.99, rely=0.5, anchor="e")
+            self.btn_nav_up.lift()
+            self.btn_nav_down.lift()
+            self.btn_nav_left.lift()
+            self.btn_nav_right.lift()
 
         if not ip_atual or ip_atual == "0.0.0.0":
             self.btn_expandir.place_forget()
@@ -1630,6 +1809,10 @@ class CentralMonitoramento(ctk.CTk):
         ip_antigo = self.grid_cameras[idx]
         self.grid_cameras[idx] = ip
         
+        # Sincroniza com o Grid Virtual
+        r, c = idx // 5, idx % 5
+        self.virtual_grid[(r + self.offset_y, c + self.offset_x)] = ip
+
         # 1. Limpeza visual ultra-robusta
         # Só mostra IP se for o slot selecionado
         if not ip or ip == "0.0.0.0":
@@ -2350,6 +2533,11 @@ class CentralMonitoramento(ctk.CTk):
 
         # Limpa o cooldown para permitir reconexão imediata se for uma predefinicao
         self.cooldown_conexoes.clear()
+
+        # Reseta Viewport ao aplicar predefinição
+        self.offset_x = 0
+        self.offset_y = 0
+        self.virtual_grid = {}
 
         # Gerencia cores na lista de predefinicoes
         if self.ultima_predefinicao:
