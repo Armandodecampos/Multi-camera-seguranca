@@ -33,10 +33,20 @@ def carregar_dados_sistema():
         "ips": os.path.join(user_dir, "lista_ips_abi.json")
     }
 
+    # 0. Janela (Carregada antes para saber num_slots)
+    janela_temp = {}
+    if os.path.exists(arquivos["janela"]):
+        try:
+            with open(arquivos["janela"], "r") as f:
+                janela_temp = json.load(f)
+        except: pass
+
+    num_slots = janela_temp.get("num_slots", 20)
+
     dados = {
         "config": {},
-        "grid": ["0.0.0.0"] * 20,
-        "janela": {},
+        "grid": ["0.0.0.0"] * num_slots,
+        "janela": janela_temp,
         "predefinicoes": {},
         "ips": []
     }
@@ -86,20 +96,17 @@ def carregar_dados_sistema():
                     dados["grid_full"] = g # Mantém o objeto completo para o __init__
                 elif isinstance(g, list):
                     # Legado
-                    for i in range(min(len(g), 20)): dados["grid"][i] = g[i]
+                    for i in range(min(len(g), num_slots)): dados["grid"][i] = g[i]
             print("OK")
         except: print("ERRO")
     else: print("PADRÃO")
 
     # 4. Janela
     print("CMD: Restaurando estado da janela...", end=" ")
-    if os.path.exists(arquivos["janela"]):
-        try:
-            with open(arquivos["janela"], "r") as f:
-                dados["janela"] = json.load(f)
-            print(f"OK ({dados['janela'].get('active_tab', 'Câmeras')})")
-        except: print("ERRO")
-    else: print("NOVA")
+    if dados["janela"]:
+        print(f"OK ({dados['janela'].get('active_tab', 'Câmeras')})")
+    else:
+        print("NOVA")
 
     # 5. Predefinições
     print("CMD: Carregando predefinições...", end=" ")
@@ -432,11 +439,25 @@ class CentralMonitoramento(ctk.CTk):
     TEXT_S = "#9E9E9E"
     GRAY_DARK = "#424242"
 
+    def configurar_variaveis_grid(self, num_slots):
+        """Define as dimensões do grid com base na quantidade de slots."""
+        self.num_slots = num_slots
+        if num_slots == 40:
+            self.grid_rows = 5
+            self.grid_cols = 8
+        else:
+            self.num_slots = 20 # Fallback
+            self.grid_rows = 4
+            self.grid_cols = 5
+
     def __init__(self, dados_iniciais=None):
         super().__init__()
         print("SISTEMA: Inicializando interface...")
 
-        self.num_slots = 20
+        # Carrega preferência de num_slots
+        janela_config = dados_iniciais.get("janela", {}) if dados_iniciais else {}
+        self.configurar_variaveis_grid(janela_config.get("num_slots", 20))
+
         self.title("Sistema de Monitoramento ABI - Full Control V5 + PTZ")
         self.geometry("1200x800")
         ctk.set_appearance_mode("Dark")
@@ -522,7 +543,7 @@ class CentralMonitoramento(ctk.CTk):
                 dados_primeira = self.predefinicoes[primeira]
 
                 if isinstance(dados_primeira, dict):
-                    self.grid_cameras = list(dados_primeira.get("grid_cameras", ["0.0.0.0"] * 20))
+                    self.grid_cameras = list(dados_primeira.get("grid_cameras", ["0.0.0.0"] * self.num_slots))
                 else:
                     self.grid_cameras = list(dados_primeira)
 
@@ -552,7 +573,7 @@ class CentralMonitoramento(ctk.CTk):
                 dados_primeira = self.predefinicoes[primeira]
 
                 if isinstance(dados_primeira, dict):
-                    self.grid_cameras = list(dados_primeira.get("grid_cameras", ["0.0.0.0"] * 20))
+                    self.grid_cameras = list(dados_primeira.get("grid_cameras", ["0.0.0.0"] * self.num_slots))
                 else:
                     self.grid_cameras = list(dados_primeira)
 
@@ -577,7 +598,7 @@ class CentralMonitoramento(ctk.CTk):
         else:
             # Semeia o grid virtual inicial com base no grid_cameras carregado (Legado ou Sem Predefinição)
             for i, ip in enumerate(self.grid_cameras):
-                r, c = i // 5, i % 5
+                r, c = i // self.grid_cols, i % self.grid_cols
                 self.virtual_grid[(r, c)] = ip
 
         # Cache persistente de CTkImage por slot para evitar "pyimage" explosion
@@ -678,61 +699,7 @@ class CentralMonitoramento(ctk.CTk):
         self.main_frame = ctk.CTkFrame(self, fg_color=self.BG_MAIN, corner_radius=0)
         self.main_frame.grid(row=0, column=2, sticky="nsew")
 
-        # Grid Frame (Câmeras)
-        self.grid_frame = ctk.CTkFrame(self.main_frame, fg_color="#000000")
-        self.grid_frame.pack(side="top", expand=True, fill="both", padx=0, pady=0)
-
-        for i in range(4): self.grid_frame.grid_rowconfigure(i, weight=1)
-        for i in range(5): self.grid_frame.grid_columnconfigure(i, weight=1)
-
-        # Botões de Controle
-        self.btn_expandir = ctk.CTkButton(self.grid_frame, text="Aumentar", width=100, height=30,
-                                           fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
-                                           corner_radius=0, command=self.toggle_grid_layout)
-
-        self.btn_gravar = ctk.CTkButton(self.grid_frame, text="Gravar", width=100, height=30,
-                                         fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
-                                         corner_radius=0, command=self.toggle_gravacao)
-
-        self.btn_mais_opcoes = ctk.CTkButton(self.grid_frame, text="Mais Opções", width=100, height=30,
-                                              fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
-                                              corner_radius=0, command=self.abrir_menu_opcoes)
-
-        self.slot_frames = []
-        # Botões de Navegação do Grid
-        self.btn_nav_up = ctk.CTkButton(self.grid_frame, text="▲", width=40, height=40, corner_radius=20,
-                                        fg_color=self.ACCENT_RED, hover_color=self.ACCENT_WINE,
-                                        command=lambda: self.navegar_grid("UP"))
-        self.btn_nav_down = ctk.CTkButton(self.grid_frame, text="▼", width=40, height=40, corner_radius=20,
-                                          fg_color=self.ACCENT_RED, hover_color=self.ACCENT_WINE,
-                                          command=lambda: self.navegar_grid("DOWN"))
-        self.btn_nav_left = ctk.CTkButton(self.grid_frame, text="◀", width=40, height=40, corner_radius=20,
-                                          fg_color=self.ACCENT_RED, hover_color=self.ACCENT_WINE,
-                                          command=lambda: self.navegar_grid("LEFT"))
-        self.btn_nav_right = ctk.CTkButton(self.grid_frame, text="▶", width=40, height=40, corner_radius=20,
-                                           fg_color=self.ACCENT_RED, hover_color=self.ACCENT_WINE,
-                                           command=lambda: self.navegar_grid("RIGHT"))
-
-        self.slot_labels = []
-        for i in range(self.num_slots):
-            row, col = i // 5, i % 5
-            frm = ctk.CTkFrame(self.grid_frame, fg_color=self.BG_SIDEBAR, corner_radius=2, border_width=2, border_color="black")
-            frm.grid(row=row, column=col, padx=1, pady=1, sticky="nsew")
-            frm.pack_propagate(False)
-
-            lbl = ctk.CTkLabel(frm, text=f"Espaço {i+1}", corner_radius=0)
-            lbl.pack(expand=True, fill="both", padx=2, pady=2)
-
-            for widget in [frm, lbl]:
-                widget.bind("<Button-1>", lambda e, idx=i: self.ao_pressionar_slot(e, idx))
-                widget.bind("<ButtonRelease-1>", lambda e, idx=i: self.ao_soltar_slot(e, idx))
-                widget.bind("<B1-Motion>", lambda e, idx=i: self.ao_arrastar_slot(e, idx))
-                widget.bind("<MouseWheel>", self.ao_scroll_mouse)
-                widget.bind("<Button-4>", self.ao_scroll_mouse)
-                widget.bind("<Button-5>", self.ao_scroll_mouse)
-
-            self.slot_frames.append(frm)
-            self.slot_labels.append(lbl)
+        self.criar_interface_grid()
 
         print("SISTEMA: Atualizando listas da UI...")
         self.atualizar_lista_cameras_ui()
@@ -1155,7 +1122,8 @@ class CentralMonitoramento(ctk.CTk):
                     "active_tab": self.tabview.get(),
                     "last_predefinicao": self.ultima_predefinicao,
                     "slot_selecionado": self.slot_selecionado,
-                    "tamanho_preview": self.tamanho_preview
+                    "tamanho_preview": self.tamanho_preview,
+                    "num_slots": self.num_slots
                 }
                 with open(self.arquivo_janela, "w") as f: json.dump(dados, f)
         except Exception as e: print(f"Erro ao salvar janela: {e}")
@@ -1180,7 +1148,7 @@ class CentralMonitoramento(ctk.CTk):
 
         for i, frm in enumerate(self.slot_frames):
             if i == index:
-                frm.grid_configure(row=0, column=0, rowspan=4, columnspan=5, padx=0, pady=0, sticky="nsew")
+                frm.grid_configure(row=0, column=0, rowspan=self.grid_rows, columnspan=self.grid_cols, padx=0, pady=0, sticky="nsew")
                 frm.configure(corner_radius=0)
                 for child in frm.winfo_children(): child.pack_configure(padx=0, pady=0)
             else:
@@ -1268,7 +1236,7 @@ class CentralMonitoramento(ctk.CTk):
         ip_foco = self.grid_cameras[self.slot_maximized] if self.slot_maximized is not None else None
 
         for i, frm in enumerate(self.slot_frames):
-            row, col = i // 5, i % 5
+            row, col = i // self.grid_cols, i % self.grid_cols
             frm.grid_configure(row=row, column=col, rowspan=1, columnspan=1, padx=1, pady=1, sticky="nsew")
             frm.configure(corner_radius=2)
             frm.grid()
@@ -1284,13 +1252,13 @@ class CentralMonitoramento(ctk.CTk):
         self.atualizar_botoes_controle()
 
     def atualizar_viewport_grid(self, salvar=True):
-        """Atualiza os 20 slots do grid com base na posição do viewport (offset_x, offset_y)."""
+        """Atualiza os slots do grid com base na posição do viewport (offset_x, offset_y)."""
         ips_antes = set(ip for ip in self.grid_cameras if ip and ip != "0.0.0.0")
 
         # 1. Atualiza IPs no grid_cameras
         novos_ips = []
         for i in range(self.num_slots):
-            r, c = i // 5, i % 5
+            r, c = i // self.grid_cols, i % self.grid_cols
             ip = self.virtual_grid.get((r + self.offset_y, c + self.offset_x), "0.0.0.0")
             novos_ips.append(ip)
             # Atualiza visual e dados sem disparar conexões ainda
@@ -1341,8 +1309,8 @@ class CentralMonitoramento(ctk.CTk):
 
         # Verifica se o novo viewport tem câmeras
         tem_camera = False
-        for r in range(4):
-            for c in range(5):
+        for r in range(self.grid_rows):
+            for c in range(self.grid_cols):
                 ip = self.virtual_grid.get((r + novo_oy, c + novo_ox), "0.0.0.0")
                 if ip and ip != "0.0.0.0":
                     tem_camera = True
@@ -1354,8 +1322,8 @@ class CentralMonitoramento(ctk.CTk):
         # Mas vamos simplificar: se o novo viewport estiver vazio, só permitimos se o ATUAL tivesse pelo menos uma câmera.
 
         foi_vazio = True
-        for r in range(4):
-            for c in range(5):
+        for r in range(self.grid_rows):
+            for c in range(self.grid_cols):
                 ip_atual = self.virtual_grid.get((r + self.offset_y, c + self.offset_x), "0.0.0.0")
                 if ip_atual and ip_atual != "0.0.0.0":
                     foi_vazio = False
@@ -1462,14 +1430,14 @@ class CentralMonitoramento(ctk.CTk):
 
                         # Reconstrói grid_cameras (o viewport atual)
                         for i in range(num_slots):
-                            r, c = i // 5, i % 5
+                            r, c = i // self.grid_cols, i % self.grid_cols
                             grid[i] = self.virtual_grid.get((r + self.offset_y, c + self.offset_x), "0.0.0.0")
 
                     elif isinstance(dados, list):
                         # Legado
                         for i in range(min(len(dados), num_slots)):
                             if dados[i]: grid[i] = dados[i]
-                            r, c = i // 5, i % 5
+                            r, c = i // self.grid_cols, i % self.grid_cols
                             self.virtual_grid[(r, c)] = grid[i]
             except Exception as e:
                 print(f"Erro ao carregar grid: {e}")
@@ -1599,7 +1567,7 @@ class CentralMonitoramento(ctk.CTk):
     def abrir_janela_configuracoes(self):
         modal = ctk.CTkToplevel(self)
         modal.title("Configurações")
-        modal.geometry("400x300")
+        modal.geometry("400x420")
         modal.resizable(False, False)
         modal.attributes("-topmost", True)
 
@@ -1629,6 +1597,57 @@ class CentralMonitoramento(ctk.CTk):
                                             unselected_hover_color=self.ACCENT_WINE)
         seg_button.set(self.tamanho_preview)
         seg_button.pack(pady=10, padx=20, fill="x")
+
+        # Segmented Button para Quantidade de Câmeras (Grid)
+        ctk.CTkLabel(modal, text="Quantidade de câmeras (Grid):", font=("Roboto", 14), text_color=self.TEXT_S).pack(pady=(20, 5))
+
+        def on_change_grid(nova_qtd_str):
+            nova_qtd = int(nova_qtd_str)
+            if nova_qtd != self.num_slots:
+                self.mudar_quantidade_slots(nova_qtd)
+
+        seg_grid = ctk.CTkSegmentedButton(modal, values=["20", "40"],
+                                           command=on_change_grid,
+                                           selected_color=self.ACCENT_RED,
+                                           unselected_hover_color=self.ACCENT_WINE)
+        seg_grid.set(str(self.num_slots))
+        seg_grid.pack(pady=10, padx=20, fill="x")
+
+    def mudar_quantidade_slots(self, nova_qtd):
+        """Altera a quantidade de slots do grid e reconstrói a interface."""
+        print(f"SISTEMA: Mudando para {nova_qtd} câmeras...")
+
+        # 1. Salva nova preferência
+        self.num_slots = nova_qtd
+
+        # 2. Para handlers e limpa caches
+        for h in self.camera_handlers.values():
+            if h != "CONECTANDO":
+                try: h.parar()
+                except: pass
+        self.camera_handlers = {}
+        self.ips_em_fila = set()
+        while not self.fila_pendente_conexoes.empty():
+            try: self.fila_pendente_conexoes.get_nowait()
+            except: pass
+
+        self.slot_ctk_images = [None] * self.num_slots
+        self.cache_ui_text = [None] * self.num_slots
+        self.cache_ui_image = [None] * self.num_slots
+        self.cache_ui_size = [None] * self.num_slots
+        self.slot_selecionado = 0
+
+        # 3. Destrói grid atual e reconstrói
+        if hasattr(self, 'grid_frame'):
+            self.grid_frame.destroy()
+
+        self.configurar_variaveis_grid(nova_qtd)
+        self.criar_interface_grid()
+
+        # 4. Sincroniza e preenche
+        self.grid_cameras = ["0.0.0.0"] * self.num_slots
+        self.atualizar_viewport_grid(salvar=True)
+        self.selecionar_slot(0)
 
     def abrir_menu_opcoes(self):
         if not self.ip_selecionado: return
@@ -1825,7 +1844,7 @@ class CentralMonitoramento(ctk.CTk):
         self.grid_cameras[idx] = ip
         
         # Sincroniza com o Grid Virtual
-        r, c = idx // 5, idx % 5
+        r, c = idx // self.grid_cols, idx % self.grid_cols
         self.virtual_grid[(r + self.offset_y, c + self.offset_x)] = ip
 
         # 1. Limpeza visual ultra-robusta
@@ -2325,6 +2344,64 @@ class CentralMonitoramento(ctk.CTk):
         def chave_ordenacao(ip): return self.dados_cameras.get(ip, f"IP {ip}").lower()
         return sorted(self.ips_unicos, key=chave_ordenacao)
 
+    def criar_interface_grid(self):
+        """Cria os elementos visuais do grid de câmeras."""
+        # Grid Frame (Câmeras)
+        self.grid_frame = ctk.CTkFrame(self.main_frame, fg_color="#000000")
+        self.grid_frame.pack(side="top", expand=True, fill="both", padx=0, pady=0)
+
+        for i in range(self.grid_rows): self.grid_frame.grid_rowconfigure(i, weight=1)
+        for i in range(self.grid_cols): self.grid_frame.grid_columnconfigure(i, weight=1)
+
+        # Botões de Controle
+        self.btn_expandir = ctk.CTkButton(self.grid_frame, text="Aumentar", width=100, height=30,
+                                           fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
+                                           corner_radius=0, command=self.toggle_grid_layout)
+
+        self.btn_gravar = ctk.CTkButton(self.grid_frame, text="Gravar", width=100, height=30,
+                                         fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
+                                         corner_radius=0, command=self.toggle_gravacao)
+
+        self.btn_mais_opcoes = ctk.CTkButton(self.grid_frame, text="Mais Opções", width=100, height=30,
+                                              fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
+                                              corner_radius=0, command=self.abrir_menu_opcoes)
+
+        self.slot_frames = []
+        # Botões de Navegação do Grid
+        self.btn_nav_up = ctk.CTkButton(self.grid_frame, text="▲", width=40, height=40, corner_radius=20,
+                                        fg_color=self.ACCENT_RED, hover_color=self.ACCENT_WINE,
+                                        command=lambda: self.navegar_grid("UP"))
+        self.btn_nav_down = ctk.CTkButton(self.grid_frame, text="▼", width=40, height=40, corner_radius=20,
+                                          fg_color=self.ACCENT_RED, hover_color=self.ACCENT_WINE,
+                                          command=lambda: self.navegar_grid("DOWN"))
+        self.btn_nav_left = ctk.CTkButton(self.grid_frame, text="◀", width=40, height=40, corner_radius=20,
+                                          fg_color=self.ACCENT_RED, hover_color=self.ACCENT_WINE,
+                                          command=lambda: self.navegar_grid("LEFT"))
+        self.btn_nav_right = ctk.CTkButton(self.grid_frame, text="▶", width=40, height=40, corner_radius=20,
+                                           fg_color=self.ACCENT_RED, hover_color=self.ACCENT_WINE,
+                                           command=lambda: self.navegar_grid("RIGHT"))
+
+        self.slot_labels = []
+        for i in range(self.num_slots):
+            row, col = i // self.grid_cols, i % self.grid_cols
+            frm = ctk.CTkFrame(self.grid_frame, fg_color=self.BG_SIDEBAR, corner_radius=2, border_width=2, border_color="black")
+            frm.grid(row=row, column=col, padx=1, pady=1, sticky="nsew")
+            frm.pack_propagate(False)
+
+            lbl = ctk.CTkLabel(frm, text=f"Espaço {i+1}", corner_radius=0)
+            lbl.pack(expand=True, fill="both", padx=2, pady=2)
+
+            for widget in [frm, lbl]:
+                widget.bind("<Button-1>", lambda e, idx=i: self.ao_pressionar_slot(e, idx))
+                widget.bind("<ButtonRelease-1>", lambda e, idx=i: self.ao_soltar_slot(e, idx))
+                widget.bind("<B1-Motion>", lambda e, idx=i: self.ao_arrastar_slot(e, idx))
+                widget.bind("<MouseWheel>", self.ao_scroll_mouse)
+                widget.bind("<Button-4>", self.ao_scroll_mouse)
+                widget.bind("<Button-5>", self.ao_scroll_mouse)
+
+            self.slot_frames.append(frm)
+            self.slot_labels.append(lbl)
+
     def criar_seletor_ip(self, parent):
         frame_seletor = ctk.CTkFrame(parent, fg_color="transparent")
         frame_seletor.pack(fill="x", padx=10, pady=10)
@@ -2579,7 +2656,7 @@ class CentralMonitoramento(ctk.CTk):
             # Reconstrói grid_cameras (o viewport salvo)
             predefinicao_ips = []
             for i in range(self.num_slots):
-                r, c = i // 5, i % 5
+                r, c = i // self.grid_cols, i % self.grid_cols
                 ip = self.virtual_grid.get((r + self.offset_y, c + self.offset_x), "0.0.0.0")
                 predefinicao_ips.append(ip)
         else:
@@ -2590,7 +2667,7 @@ class CentralMonitoramento(ctk.CTk):
             predefinicao_ips = list(dados)
             # Semeia virtual_grid legado
             for i, ip in enumerate(predefinicao_ips):
-                r, c = i // 5, i % 5
+                r, c = i // self.grid_cols, i % self.grid_cols
                 self.virtual_grid[(r, c)] = ip
 
         # Gerencia cores na lista de predefinicoes
