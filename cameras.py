@@ -1299,9 +1299,9 @@ class CentralMonitoramento(ctk.CTk):
         # 2. Gerencia conexões baseadas na mudança de visibilidade
         ips_depois = set(ip for ip in novos_ips if ip and ip != "0.0.0.0")
 
-        # Para câmeras que saíram do viewport
+        # Para câmeras que foram removidas do grid (não apenas saíram do viewport)
         for ip in ips_antes:
-            if ip not in ips_depois:
+            if ip not in self.virtual_grid.values():
                 handler = self.camera_handlers.get(ip)
                 if handler and handler != "CONECTANDO":
                     try: handler.parar()
@@ -1861,7 +1861,7 @@ class CentralMonitoramento(ctk.CTk):
 
         # 2. Gerenciamento de conexões (se solicitado)
         if gerenciar_conexoes:
-            if ip_antigo and ip_antigo != "0.0.0.0" and ip_antigo != ip and ip_antigo not in self.grid_cameras:
+            if ip_antigo and ip_antigo != "0.0.0.0" and ip_antigo != ip and ip_antigo not in self.virtual_grid.values():
                 if ip_antigo in self.camera_handlers:
                     try: self.camera_handlers[ip_antigo].parar()
                     except: pass
@@ -2600,9 +2600,10 @@ class CentralMonitoramento(ctk.CTk):
         self.pintar_predefinicao(nome, self.ACCENT_WINE)
 
         # 1. Identifica quais IPs devem ser mantidos e quais devem ser fechados
-        ips_novos_set = set(ip for ip in predefinicao_ips if ip and ip != "0.0.0.0")
+        # ABI Rule: Todas as câmeras da predefinição devem ficar ativas
+        ips_novos_set = set(ip for ip in self.virtual_grid.values() if ip and ip != "0.0.0.0")
 
-        # Fecha handlers de câmeras que NÃO estão no novo viewport
+        # Fecha handlers de câmeras que NÃO estão no novo grid virtual
         for ip_h in list(self.camera_handlers.keys()):
             if ip_h not in ips_novos_set:
                 h = self.camera_handlers[ip_h]
