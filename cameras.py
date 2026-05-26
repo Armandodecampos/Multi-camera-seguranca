@@ -932,11 +932,28 @@ class CentralMonitoramento(ctk.CTk):
                     ny = max(0.0, min(1.0, handler.zoom_center[1] - shift_y))
                     handler.zoom_center = (nx, ny)
         else:
-            # Arrasto de câmera para troca de posição
-            ip = self.grid_cameras[index]
-            if ip and ip != "0.0.0.0":
-                nome = self.dados_cameras.get(ip, ip)
-                self.exibir_fantasma_drag(event.x_root, event.y_root, nome)
+            # Lógica PTZ quando maximizado
+            if self.slot_maximized is not None or self.em_tela_cheia:
+                dx_total = event.x_root - self.press_data["x_start"]
+                dy_total = event.y_root - self.press_data["y_start"]
+
+                threshold = 50
+                direcao = "STOP"
+
+                if abs(dx_total) > abs(dy_total):
+                    if dx_total > threshold: direcao = "RIGHT"
+                    elif dx_total < -threshold: direcao = "LEFT"
+                else:
+                    if dy_total > threshold: direcao = "DOWN"
+                    elif dy_total < -threshold: direcao = "UP"
+
+                self.comando_ptz(direcao)
+            else:
+                # Arrasto de câmera para troca de posição
+                ip = self.grid_cameras[index]
+                if ip and ip != "0.0.0.0":
+                    nome = self.dados_cameras.get(ip, ip)
+                    self.exibir_fantasma_drag(event.x_root, event.y_root, nome)
 
     def executar_zoom_digital(self, event, direcao):
         idx = self.encontrar_slot_por_coords(event.x_root, event.y_root)
@@ -972,6 +989,7 @@ class CentralMonitoramento(ctk.CTk):
             if self.tecla_pressionada == direcao: return
             self.tecla_pressionada = direcao
         else:
+            if self.tecla_pressionada is None: return
             self.tecla_pressionada = None
 
         mapa = {
@@ -1200,6 +1218,7 @@ class CentralMonitoramento(ctk.CTk):
 
         source_idx = self.press_data.get("index")
         if self.slot_maximized is not None or self.em_tela_cheia:
+            self.comando_ptz("STOP")
             self.press_data = None
             return
         try:
