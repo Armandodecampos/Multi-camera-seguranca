@@ -1,6 +1,6 @@
 import cv2
 import customtkinter as ctk
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageDraw
 import json
 import os
 import threading
@@ -476,10 +476,10 @@ class CentralMonitoramento(ctk.CTk):
         self.bind("<Button-4>", self.ao_scroll_mouse)
         self.bind("<Button-5>", self.ao_scroll_mouse)
 
-        self.bind("<KeyPress-Up>", lambda e: self.comando_ptz("UP"))
-        self.bind("<KeyPress-Down>", lambda e: self.comando_ptz("DOWN"))
-        self.bind("<KeyPress-Left>", lambda e: self.comando_ptz("LEFT"))
-        self.bind("<KeyPress-Right>", lambda e: self.comando_ptz("RIGHT"))
+        self.bind("<KeyPress-Up>", lambda e: self.ao_tecla_direcional("UP"))
+        self.bind("<KeyPress-Down>", lambda e: self.ao_tecla_direcional("DOWN"))
+        self.bind("<KeyPress-Left>", lambda e: self.ao_tecla_direcional("LEFT"))
+        self.bind("<KeyPress-Right>", lambda e: self.ao_tecla_direcional("RIGHT"))
 
         self.bind("<KeyRelease-Up>", lambda e: self.comando_ptz("STOP"))
         self.bind("<KeyRelease-Down>", lambda e: self.comando_ptz("STOP"))
@@ -600,6 +600,9 @@ class CentralMonitoramento(ctk.CTk):
             for i, ip in enumerate(self.grid_cameras):
                 r, c = i // self.grid_cols, i % self.grid_cols
                 self.virtual_grid[(r, c)] = ip
+
+        # Inicializa ícones de navegação
+        self._inicializar_icones_navegacao()
 
         # Cache persistente de CTkImage por slot para evitar "pyimage" explosion
         self.slot_ctk_images = [None] * self.num_slots
@@ -1288,6 +1291,18 @@ class CentralMonitoramento(ctk.CTk):
 
         self.atualizar_botoes_controle()
         self.update_idletasks()
+
+    def ao_tecla_direcional(self, direcao):
+        """Gerencia navegação por teclado: PTZ se maximizado, Grid caso contrário."""
+        # Se estiver em um campo de entrada, não navega
+        foco = self.focus_get()
+        if isinstance(foco, (ctk.CTkEntry, ctk.CTkTextbox)):
+            return
+
+        if self.slot_maximized is not None:
+            self.comando_ptz(direcao)
+        else:
+            self.navegar_grid(direcao)
 
     def navegar_grid(self, direcao):
         """Move o viewport do grid na direção especificada, se válido."""
@@ -2344,6 +2359,25 @@ class CentralMonitoramento(ctk.CTk):
         def chave_ordenacao(ip): return self.dados_cameras.get(ip, f"IP {ip}").lower()
         return sorted(self.ips_unicos, key=chave_ordenacao)
 
+    def _inicializar_icones_navegacao(self):
+        """Cria ícones de triângulos vermelhos para os botões de navegação."""
+        self.nav_icons = {}
+        tamanho = (40, 40)
+        cor_vermelha = self.ACCENT_RED
+
+        direcoes = {
+            "UP": [(20, 10), (10, 30), (30, 30)],
+            "DOWN": [(10, 10), (30, 10), (20, 30)],
+            "LEFT": [(30, 10), (30, 30), (10, 20)],
+            "RIGHT": [(10, 10), (10, 30), (30, 20)]
+        }
+
+        for dir_name, pontos in direcoes.items():
+            img = Image.new("RGBA", tamanho, (0, 0, 0, 0))
+            draw = ImageDraw.Draw(img)
+            draw.polygon(pontos, fill=cor_vermelha)
+            self.nav_icons[dir_name] = ctk.CTkImage(img, size=tamanho)
+
     def criar_interface_grid(self):
         """Cria os elementos visuais do grid de câmeras."""
         # Grid Frame (Câmeras)
@@ -2368,17 +2402,21 @@ class CentralMonitoramento(ctk.CTk):
 
         self.slot_frames = []
         # Botões de Navegação do Grid
-        self.btn_nav_up = ctk.CTkButton(self.grid_frame, text="▲", width=40, height=40, corner_radius=20,
-                                        fg_color=self.ACCENT_RED, hover_color=self.ACCENT_WINE,
+        self.btn_nav_up = ctk.CTkButton(self.grid_frame, text="", width=40, height=40, corner_radius=0,
+                                        fg_color="transparent", hover_color=self.ACCENT_WINE,
+                                        image=self.nav_icons["UP"],
                                         command=lambda: self.navegar_grid("UP"))
-        self.btn_nav_down = ctk.CTkButton(self.grid_frame, text="▼", width=40, height=40, corner_radius=20,
-                                          fg_color=self.ACCENT_RED, hover_color=self.ACCENT_WINE,
+        self.btn_nav_down = ctk.CTkButton(self.grid_frame, text="", width=40, height=40, corner_radius=0,
+                                          fg_color="transparent", hover_color=self.ACCENT_WINE,
+                                          image=self.nav_icons["DOWN"],
                                           command=lambda: self.navegar_grid("DOWN"))
-        self.btn_nav_left = ctk.CTkButton(self.grid_frame, text="◀", width=40, height=40, corner_radius=20,
-                                          fg_color=self.ACCENT_RED, hover_color=self.ACCENT_WINE,
+        self.btn_nav_left = ctk.CTkButton(self.grid_frame, text="", width=40, height=40, corner_radius=0,
+                                          fg_color="transparent", hover_color=self.ACCENT_WINE,
+                                          image=self.nav_icons["LEFT"],
                                           command=lambda: self.navegar_grid("LEFT"))
-        self.btn_nav_right = ctk.CTkButton(self.grid_frame, text="▶", width=40, height=40, corner_radius=20,
-                                           fg_color=self.ACCENT_RED, hover_color=self.ACCENT_WINE,
+        self.btn_nav_right = ctk.CTkButton(self.grid_frame, text="", width=40, height=40, corner_radius=0,
+                                           fg_color="transparent", hover_color=self.ACCENT_WINE,
+                                           image=self.nav_icons["RIGHT"],
                                            command=lambda: self.navegar_grid("RIGHT"))
 
         self.slot_labels = []
