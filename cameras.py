@@ -727,7 +727,7 @@ class CentralMonitoramento(ctk.CTk):
                 txt = "CONECTANDO..." if i != self.slot_selecionado else f"CONECTANDO...\n{ip}"
                 self.slot_labels[i].configure(text=txt)
             else:
-                self.slot_labels[i].configure(text=f"Espaço {i+1}")
+                self.slot_labels[i].configure(text="")
 
         self.selecionar_slot(self.slot_selecionado)
         self.restaurar_grid()
@@ -1386,10 +1386,9 @@ class CentralMonitoramento(ctk.CTk):
         self.slot_selecionado = index
         self.slot_frames[index].configure(border_color=self.ACCENT_RED, border_width=2)
 
-        self.title(f"Monitoramento ABI - Espaço {index + 1} selecionado")
-
         ip_novo = self.grid_cameras[index]
         if ip_novo and ip_novo != "0.0.0.0":
+            self.title(f"Monitoramento ABI - {ip_novo} selecionado")
             if ip_anterior and ip_anterior != ip_novo: self.pintar_botao(ip_anterior, self.BG_SIDEBAR)
             self.ip_selecionado = ip_novo
             nome = self.dados_cameras.get(ip_novo, "")
@@ -1403,6 +1402,7 @@ class CentralMonitoramento(ctk.CTk):
             # Sincroniza o seletor de IP
             self.sincronizar_seletor_com_ip(ip_novo)
         else:
+            self.title("Monitoramento ABI")
             if ip_anterior: self.pintar_botao(ip_anterior, self.BG_SIDEBAR)
             self.ip_selecionado = None
         self.atualizar_botoes_controle()
@@ -1840,7 +1840,7 @@ class CentralMonitoramento(ctk.CTk):
             # Cria o novo label
             ip = self.grid_cameras[idx]
             bg_color = "#000000" if not ip or ip == "0.0.0.0" else self.BG_SIDEBAR
-            lbl = ctk.CTkLabel(frm, text=f"Espaço {idx+1}", corner_radius=0, fg_color=bg_color)
+            lbl = ctk.CTkLabel(frm, text="", corner_radius=0, fg_color=bg_color)
             lbl.pack(expand=True, fill="both", padx=2, pady=2)
             frm.configure(fg_color=bg_color)
 
@@ -1885,7 +1885,7 @@ class CentralMonitoramento(ctk.CTk):
         # 1. Limpeza visual ultra-robusta
         # Só mostra IP se for o slot selecionado
         if not ip or ip == "0.0.0.0":
-            txt = f"Espaço {idx+1}"
+            txt = ""
             bg_color = "#000000"
         else:
             txt = f"CONECTANDO...\n{ip}" if idx == self.slot_selecionado else "CONECTANDO..."
@@ -2120,7 +2120,7 @@ class CentralMonitoramento(ctk.CTk):
                     # Segurança: se o slot deveria estar vazio, garante texto e imagem vazia
                     if ip == "0.0.0.0":
                         try:
-                            target_text = f"Espaço {i+1}"
+                            target_text = ""
                             # Verifica se precisa atualizar para evitar cintilação (usando cache)
                             if (self.cache_ui_text[i] != target_text or
                                 self.cache_ui_image[i] != self.img_vazia):
@@ -2447,7 +2447,7 @@ class CentralMonitoramento(ctk.CTk):
             frm.grid(row=row, column=col, padx=1, pady=1, sticky="nsew")
             frm.pack_propagate(False)
 
-            lbl = ctk.CTkLabel(frm, text=f"Espaço {i+1}", corner_radius=0)
+            lbl = ctk.CTkLabel(frm, text="", corner_radius=0)
             lbl.pack(expand=True, fill="both", padx=2, pady=2)
 
             for widget in [frm, lbl]:
