@@ -524,6 +524,7 @@ class CentralMonitoramento(ctk.CTk):
         self.iconic_state = False
         self.zoom_stop_timer = None
         self.ctrl_pressionado = False
+        self.predefinicoes_desbloqueadas = set()
 
         # Grid Virtual e Viewport
         self.virtual_grid = {}
@@ -2698,22 +2699,75 @@ class CentralMonitoramento(ctk.CTk):
             except Exception as e:
                 self.abrir_modal_alerta("Erro", f"Falha ao importar predefinições: {e}")
 
-    def salvar_predefinicao_atual(self):
-        def on_name_entered(nome):
-            nome = nome.strip()
+    def toggle_lock_predefinicao(self, nome):
+        if nome in self.predefinicoes_desbloqueadas:
+            self.predefinicoes_desbloqueadas.remove(nome)
+            self.atualizar_lista_predefinicoes_ui()
+        else:
+            def on_success():
+                self.predefinicoes_desbloqueadas.add(nome)
+                self.atualizar_lista_predefinicoes_ui()
+            self.solicitar_senha(on_success)
+
+    def abrir_modal_salvar_predefinicao(self, callback):
+        modal = ctk.CTkToplevel(self)
+        modal.title("Salvar Predefinição")
+        modal.geometry("400x300")
+        modal.resizable(False, False)
+        modal.attributes("-topmost", True)
+
+        try:
+            self.update_idletasks()
+            x = self.winfo_x() + (self.winfo_width() // 2) - 200
+            y = self.winfo_y() + (self.winfo_height() // 2) - 150
+            modal.geometry(f"+{x}+{y}")
+        except: pass
+
+        ctk.CTkLabel(modal, text="Salvar Nova Predefinição", font=("Roboto", 16, "bold")).pack(pady=20)
+
+        ctk.CTkLabel(modal, text="Nome da Predefinição:").pack()
+        entry_nome = ctk.CTkEntry(modal, width=300, placeholder_text="Ex: Turno Manhã")
+        entry_nome.pack(pady=5)
+        entry_nome.focus_set()
+
+        check_adm = ctk.CTkCheckBox(modal, text="Predefinição do Adm")
+        check_adm.pack(pady=10)
+
+        def confirmar():
+            nome = entry_nome.get().strip()
+            is_adm = check_adm.get() == 1
             if not nome:
-                self.abrir_modal_alerta("Erro", "O nome da predefinição não pode ser vazio.")
+                self.abrir_modal_alerta("Erro", "O nome é obrigatório.")
                 return
+            modal.destroy()
+            callback(nome, is_adm)
 
+        btn_conf = ctk.CTkButton(modal, text="Confirmar", fg_color=self.ACCENT_RED, hover_color=self.ACCENT_WINE,
+                                  corner_radius=0, height=40, command=confirmar)
+        btn_conf.pack(fill="x", padx=40, pady=10)
+
+        btn_canc = ctk.CTkButton(modal, text="Cancelar", fg_color=self.GRAY_DARK, hover_color=self.TEXT_S,
+                                  corner_radius=0, height=40, command=modal.destroy)
+        btn_canc.pack(fill="x", padx=40)
+
+        modal.bind("<Return>", lambda e: confirmar())
+
+    def salvar_predefinicao_atual(self):
+        def on_confirmed(nome, is_adm):
             if nome in self.predefinicoes:
+                dados_existentes = self.predefinicoes[nome]
+                if isinstance(dados_existentes, dict) and dados_existentes.get("is_adm", False) and nome not in self.predefinicoes_desbloqueadas:
+                     self.abrir_modal_alerta("Erro", "Esta predefinição do Adm está bloqueada.")
+                     return
+
                 self.abrir_modal_confirmacao("Confirmar", f"A predefinição '{nome}' já existe. Deseja sobrescrevê-la?",
-                                                lambda: self._salvar_predefinicao(nome))
+                                                lambda: self._salvar_predefinicao(nome, is_adm))
             else:
-                self._salvar_predefinicao(nome)
+                self._salvar_predefinicao(nome, is_adm)
 
-        self.abrir_modal_input("Salvar Predefinição", "Digite um nome para esta predefinição:", on_name_entered)
+        self.abrir_modal_salvar_predefinicao(on_confirmed)
 
-    def _salvar_predefinicao(self, nome):
+    def _salvar_predefinicao(self, nome, is_adm=False):
         # Converte chaves de tupla para strings "r,c" para salvar no JSON da predefinição
         vg_serializable = {f"{r},{c}": ip for (r, c), ip in self.virtual_grid.items()}
 
@@ -2722,7 +2776,8 @@ class CentralMonitoramento(ctk.CTk):
             "grid_cameras": list(self.grid_cameras),
             "virtual_grid": vg_serializable,
             "offset_x": self.offset_x,
-            "offset_y": self.offset_y
+            "offset_y": self.offset_y,
+            "is_adm": is_adm
         }
 
         self.predefinicoes[nome] = dados_predefinicao
@@ -2825,12 +2880,19 @@ class CentralMonitoramento(ctk.CTk):
         # Converte chaves de tupla para strings "r,c" para salvar no JSON da predefinição
         vg_serializable = {f"{r},{c}": ip for (r, c), ip in self.virtual_grid.items()}
 
+        # Preserva o flag is_adm se já existir
+        is_adm = False
+        dados_antigos = self.predefinicoes.get(nome)
+        if isinstance(dados_antigos, dict):
+            is_adm = dados_antigos.get("is_adm", False)
+
         # Salva o estado completo do grid virtual
         dados_predefinicao = {
             "grid_cameras": list(self.grid_cameras),
             "virtual_grid": vg_serializable,
             "offset_x": self.offset_x,
-            "offset_y": self.offset_y
+            "offset_y": self.offset_y,
+            "is_adm": is_adm
         }
 
         self.predefinicoes[nome] = dados_predefinicao
@@ -2847,6 +2909,8 @@ class CentralMonitoramento(ctk.CTk):
             del self.predefinicoes[nome]
             if self.ultima_predefinicao == nome:
                 self.ultima_predefinicao = None
+            if nome in self.predefinicoes_desbloqueadas:
+                self.predefinicoes_desbloqueadas.remove(nome)
             self.salvar_predefinicoes()
             self.atualizar_lista_predefinicoes_ui()
 
@@ -2866,6 +2930,9 @@ class CentralMonitoramento(ctk.CTk):
                     self.predefinicoes[novo_nome] = self.predefinicoes.pop(nome_antigo)
                     if self.ultima_predefinicao == nome_antigo:
                         self.ultima_predefinicao = novo_nome
+                    if nome_antigo in self.predefinicoes_desbloqueadas:
+                        self.predefinicoes_desbloqueadas.remove(nome_antigo)
+                        self.predefinicoes_desbloqueadas.add(novo_nome)
                     self.salvar_predefinicoes()
                     self.atualizar_lista_predefinicoes_ui()
 
@@ -2886,6 +2953,11 @@ class CentralMonitoramento(ctk.CTk):
             largura_sidebar = 320
 
         for nome in sorted(self.predefinicoes.keys(), key=str.lower):
+            dados = self.predefinicoes.get(nome, {})
+            is_adm = False
+            if isinstance(dados, dict):
+                is_adm = dados.get("is_adm", False)
+
             cor = self.ACCENT_WINE if nome == self.ultima_predefinicao else self.BG_SIDEBAR
             frm = ctk.CTkFrame(self.scroll_predefinicoes, fg_color=cor, border_width=0, border_color=self.GRAY_DARK)
             frm.pack(fill="x", pady=2, padx=2)
@@ -2894,24 +2966,36 @@ class CentralMonitoramento(ctk.CTk):
             frm.bind("<Button-1>", lambda e, n=nome: self.aplicar_predefinicao(n))
             frm.configure(cursor="hand2")
 
+            is_desbloqueada = nome in self.predefinicoes_desbloqueadas
+
             # Botões de Controle (Ordem: X, ✎, 💾 - pack no lado direito)
-            btn_del = ctk.CTkButton(frm, text="X", width=30, height=30, fg_color="transparent",
-                                     text_color=self.TEXT_S, hover_color=self.ACCENT_RED,
-                                     command=lambda n=nome: self.deletar_predefinicao(n))
-            btn_del.pack(side="right", padx=5)
+            if not is_adm or is_desbloqueada:
+                btn_del = ctk.CTkButton(frm, text="X", width=30, height=30, fg_color="transparent",
+                                         text_color=self.TEXT_S, hover_color=self.ACCENT_RED,
+                                         command=lambda n=nome: self.deletar_predefinicao(n))
+                btn_del.pack(side="right", padx=5)
 
-            btn_ren = ctk.CTkButton(frm, text="✎", width=30, height=30, fg_color="transparent",
-                                     text_color=self.TEXT_S, hover_color=self.GRAY_DARK,
-                                     command=lambda n=nome: self.renomear_predefinicao(n))
-            btn_ren.pack(side="right", padx=2)
+                btn_ren = ctk.CTkButton(frm, text="✎", width=30, height=30, fg_color="transparent",
+                                         text_color=self.TEXT_S, hover_color=self.GRAY_DARK,
+                                         command=lambda n=nome: self.renomear_predefinicao(n))
+                btn_ren.pack(side="right", padx=2)
 
-            btn_save = ctk.CTkButton(frm, text="💾", width=30, height=30, fg_color="transparent",
-                                      text_color=self.TEXT_S, hover_color=self.GRAY_DARK,
-                                      command=lambda n=nome: self.sobrescrever_predefinicao(n))
-            btn_save.pack(side="right", padx=2)
+                btn_save = ctk.CTkButton(frm, text="💾", width=30, height=30, fg_color="transparent",
+                                          text_color=self.TEXT_S, hover_color=self.GRAY_DARK,
+                                          command=lambda n=nome: self.sobrescrever_predefinicao(n))
+                btn_save.pack(side="right", padx=2)
+
+            # Ícone de Cadeado para Predefinições Adm
+            if is_adm:
+                cadeado_icon = "🔓" if is_desbloqueada else "🔒"
+                btn_lock = ctk.CTkButton(frm, text=cadeado_icon, width=30, height=30, fg_color="transparent",
+                                          text_color=self.TEXT_S, hover_color=self.GRAY_DARK,
+                                          command=lambda n=nome: self.toggle_lock_predefinicao(n))
+                btn_lock.pack(side="left", padx=(5, 0))
 
             # Label de Nome (Expandível)
-            wrap_val = max(100, largura_sidebar - 160)
+            offset_wrap = 190 if is_adm else 160
+            wrap_val = max(100, largura_sidebar - offset_wrap)
             lbl = ctk.CTkLabel(frm, text=nome, font=("Roboto", 12, "bold"), text_color=self.TEXT_P,
                                anchor="w", cursor="hand2", wraplength=wrap_val, width=wrap_val, justify="left", height=0)
             lbl.pack(side="left", expand=True, fill="both", padx=10, pady=10)
