@@ -2366,8 +2366,7 @@ class CentralMonitoramento(ctk.CTk):
         return sorted(self.ips_unicos, key=chave_ordenacao)
 
     def _inicializar_icones_navegacao(self):
-        """Cria ícones de setas brancas para os botões de navegação circular."""
-        from PIL import Image, ImageDraw
+        """Cria ícones de setas brancas para os botões de navegação."""
         self.nav_icons = {}
         tamanho_canvas = (40, 40)
         cor_flecha = "white"
@@ -2384,7 +2383,7 @@ class CentralMonitoramento(ctk.CTk):
             img = Image.new("RGBA", tamanho_canvas, (0, 0, 0, 0))
             draw = ImageDraw.Draw(img)
             draw.polygon(pontos, fill=cor_flecha)
-            # Usamos size=(20, 20) para que o ícone fique bem centrado no círculo de 40x40
+            # Usamos size=(20, 20) para que o ícone fique bem centrado no botão
             self.nav_icons[dir_name] = ctk.CTkImage(img, size=(20, 20))
 
     def criar_interface_grid(self):
@@ -2410,28 +2409,22 @@ class CentralMonitoramento(ctk.CTk):
                                               corner_radius=0, command=self.abrir_menu_opcoes)
 
         self.slot_frames = []
-        # Botões de Navegação do Grid (Usando CTkLabel para garantir círculo perfeito)
-        self.btn_nav_up = ctk.CTkLabel(self.grid_frame, text="", width=40, height=40, corner_radius=20,
-                                       fg_color=self.ACCENT_RED, image=self.nav_icons["UP"])
-        self.btn_nav_up.bind("<Button-1>", lambda e: self.navegar_grid("UP"))
+        # Botões de Navegação do Grid (Usando CTkButton com corner_radius=0 para fundo quadrado)
+        self.btn_nav_up = ctk.CTkButton(self.grid_frame, text="", width=40, height=40, corner_radius=0,
+                                         fg_color=self.ACCENT_RED, hover_color=self.ACCENT_WINE,
+                                         image=self.nav_icons["UP"], command=lambda: self.navegar_grid("UP"))
 
-        self.btn_nav_down = ctk.CTkLabel(self.grid_frame, text="", width=40, height=40, corner_radius=20,
-                                         fg_color=self.ACCENT_RED, image=self.nav_icons["DOWN"])
-        self.btn_nav_down.bind("<Button-1>", lambda e: self.navegar_grid("DOWN"))
+        self.btn_nav_down = ctk.CTkButton(self.grid_frame, text="", width=40, height=40, corner_radius=0,
+                                           fg_color=self.ACCENT_RED, hover_color=self.ACCENT_WINE,
+                                           image=self.nav_icons["DOWN"], command=lambda: self.navegar_grid("DOWN"))
 
-        self.btn_nav_left = ctk.CTkLabel(self.grid_frame, text="", width=40, height=40, corner_radius=20,
-                                         fg_color=self.ACCENT_RED, image=self.nav_icons["LEFT"])
-        self.btn_nav_left.bind("<Button-1>", lambda e: self.navegar_grid("LEFT"))
+        self.btn_nav_left = ctk.CTkButton(self.grid_frame, text="", width=40, height=40, corner_radius=0,
+                                           fg_color=self.ACCENT_RED, hover_color=self.ACCENT_WINE,
+                                           image=self.nav_icons["LEFT"], command=lambda: self.navegar_grid("LEFT"))
 
-        self.btn_nav_right = ctk.CTkLabel(self.grid_frame, text="", width=40, height=40, corner_radius=20,
-                                          fg_color=self.ACCENT_RED, image=self.nav_icons["RIGHT"])
-        self.btn_nav_right.bind("<Button-1>", lambda e: self.navegar_grid("RIGHT"))
-
-        # Efeito de hover manual e cursor para as labels
-        for btn in [self.btn_nav_up, self.btn_nav_down, self.btn_nav_left, self.btn_nav_right]:
-            btn.configure(cursor="hand2")
-            btn.bind("<Enter>", lambda e, b=btn: b.configure(fg_color=self.ACCENT_WINE))
-            btn.bind("<Leave>", lambda e, b=btn: b.configure(fg_color=self.ACCENT_RED))
+        self.btn_nav_right = ctk.CTkButton(self.grid_frame, text="", width=40, height=40, corner_radius=0,
+                                            fg_color=self.ACCENT_RED, hover_color=self.ACCENT_WINE,
+                                            image=self.nav_icons["RIGHT"], command=lambda: self.navegar_grid("RIGHT"))
 
         self.slot_labels = []
         for i in range(self.num_slots):
