@@ -2412,19 +2412,19 @@ class CentralMonitoramento(ctk.CTk):
         self.slot_frames = []
         # Botões de Navegação do Grid
         self.btn_nav_up = ctk.CTkButton(self.grid_frame, text="", width=40, height=40, corner_radius=20,
-                                        fg_color="transparent", bg_color="transparent", hover_color=self.ACCENT_WINE,
+                                        fg_color="transparent", bg_color="transparent", hover_color="transparent",
                                         image=self.nav_icons["UP"],
                                         command=lambda: self.navegar_grid("UP"))
         self.btn_nav_down = ctk.CTkButton(self.grid_frame, text="", width=40, height=40, corner_radius=20,
-                                          fg_color="transparent", bg_color="transparent", hover_color=self.ACCENT_WINE,
+                                          fg_color="transparent", bg_color="transparent", hover_color="transparent",
                                           image=self.nav_icons["DOWN"],
                                           command=lambda: self.navegar_grid("DOWN"))
         self.btn_nav_left = ctk.CTkButton(self.grid_frame, text="", width=40, height=40, corner_radius=20,
-                                          fg_color="transparent", bg_color="transparent", hover_color=self.ACCENT_WINE,
+                                          fg_color="transparent", bg_color="transparent", hover_color="transparent",
                                           image=self.nav_icons["LEFT"],
                                           command=lambda: self.navegar_grid("LEFT"))
         self.btn_nav_right = ctk.CTkButton(self.grid_frame, text="", width=40, height=40, corner_radius=20,
-                                           fg_color="transparent", bg_color="transparent", hover_color=self.ACCENT_WINE,
+                                           fg_color="transparent", bg_color="transparent", hover_color="transparent",
                                            image=self.nav_icons["RIGHT"],
                                            command=lambda: self.navegar_grid("RIGHT"))
 
