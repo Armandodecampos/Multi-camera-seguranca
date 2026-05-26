@@ -2390,7 +2390,7 @@ class CentralMonitoramento(ctk.CTk):
     def criar_interface_grid(self):
         """Cria os elementos visuais do grid de câmeras."""
         # Grid Frame (Câmeras)
-        self.grid_frame = ctk.CTkFrame(self.main_frame, fg_color="#000000")
+        self.grid_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
         self.grid_frame.pack(side="top", expand=True, fill="both", padx=0, pady=0)
 
         for i in range(self.grid_rows): self.grid_frame.grid_rowconfigure(i, weight=1)
@@ -2411,20 +2411,20 @@ class CentralMonitoramento(ctk.CTk):
 
         self.slot_frames = []
         # Botões de Navegação do Grid
-        self.btn_nav_up = ctk.CTkButton(self.grid_frame, text="", width=40, height=40, corner_radius=0,
-                                        fg_color="transparent", hover_color=self.ACCENT_WINE,
+        self.btn_nav_up = ctk.CTkButton(self.grid_frame, text="", width=40, height=40, corner_radius=20,
+                                        fg_color="transparent", bg_color="transparent", hover_color=self.ACCENT_WINE,
                                         image=self.nav_icons["UP"],
                                         command=lambda: self.navegar_grid("UP"))
-        self.btn_nav_down = ctk.CTkButton(self.grid_frame, text="", width=40, height=40, corner_radius=0,
-                                          fg_color="transparent", hover_color=self.ACCENT_WINE,
+        self.btn_nav_down = ctk.CTkButton(self.grid_frame, text="", width=40, height=40, corner_radius=20,
+                                          fg_color="transparent", bg_color="transparent", hover_color=self.ACCENT_WINE,
                                           image=self.nav_icons["DOWN"],
                                           command=lambda: self.navegar_grid("DOWN"))
-        self.btn_nav_left = ctk.CTkButton(self.grid_frame, text="", width=40, height=40, corner_radius=0,
-                                          fg_color="transparent", hover_color=self.ACCENT_WINE,
+        self.btn_nav_left = ctk.CTkButton(self.grid_frame, text="", width=40, height=40, corner_radius=20,
+                                          fg_color="transparent", bg_color="transparent", hover_color=self.ACCENT_WINE,
                                           image=self.nav_icons["LEFT"],
                                           command=lambda: self.navegar_grid("LEFT"))
-        self.btn_nav_right = ctk.CTkButton(self.grid_frame, text="", width=40, height=40, corner_radius=0,
-                                           fg_color="transparent", hover_color=self.ACCENT_WINE,
+        self.btn_nav_right = ctk.CTkButton(self.grid_frame, text="", width=40, height=40, corner_radius=20,
+                                           fg_color="transparent", bg_color="transparent", hover_color=self.ACCENT_WINE,
                                            image=self.nav_icons["RIGHT"],
                                            command=lambda: self.navegar_grid("RIGHT"))
 
