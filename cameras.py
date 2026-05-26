@@ -481,10 +481,10 @@ class CentralMonitoramento(ctk.CTk):
         self.bind("<KeyPress-Left>", lambda e: self.ao_tecla_direcional("LEFT"))
         self.bind("<KeyPress-Right>", lambda e: self.ao_tecla_direcional("RIGHT"))
 
-        self.bind("<KeyRelease-Up>", lambda e: self.comando_ptz("STOP"))
-        self.bind("<KeyRelease-Down>", lambda e: self.comando_ptz("STOP"))
-        self.bind("<KeyRelease-Left>", lambda e: self.comando_ptz("STOP"))
-        self.bind("<KeyRelease-Right>", lambda e: self.comando_ptz("STOP"))
+        self.bind("<KeyRelease-Up>", lambda e: self.ao_tecla_solta("UP"))
+        self.bind("<KeyRelease-Down>", lambda e: self.ao_tecla_solta("DOWN"))
+        self.bind("<KeyRelease-Left>", lambda e: self.ao_tecla_solta("LEFT"))
+        self.bind("<KeyRelease-Right>", lambda e: self.ao_tecla_solta("RIGHT"))
 
         # Binds para Zoom Digital (Drag)
         self.bind_all("<KeyPress-Control_L>", lambda e: self._atualizar_estado_ctrl(e, True))
@@ -1303,6 +1303,11 @@ class CentralMonitoramento(ctk.CTk):
             self.comando_ptz(direcao)
         else:
             self.navegar_grid(direcao)
+
+    def ao_tecla_solta(self, direcao):
+        """Para o PTZ apenas se estivermos no modo PTZ."""
+        if self.slot_maximized is not None:
+            self.comando_ptz("STOP")
 
     def navegar_grid(self, direcao):
         """Move o viewport do grid na direção especificada, se válido."""
@@ -2360,22 +2365,26 @@ class CentralMonitoramento(ctk.CTk):
         return sorted(self.ips_unicos, key=chave_ordenacao)
 
     def _inicializar_icones_navegacao(self):
-        """Cria ícones de triângulos vermelhos para os botões de navegação."""
+        """Cria ícones de setas em bloco vermelhas com contorno branco para navegação."""
         self.nav_icons = {}
         tamanho = (40, 40)
         cor_vermelha = self.ACCENT_RED
+        cor_contorno = "white"
+        largura_contorno = 2
 
+        # Coordenadas para setas em bloco (block arrows)
         direcoes = {
-            "UP": [(20, 10), (10, 30), (30, 30)],
-            "DOWN": [(10, 10), (30, 10), (20, 30)],
-            "LEFT": [(30, 10), (30, 30), (10, 20)],
-            "RIGHT": [(10, 10), (10, 30), (30, 20)]
+            "UP": [(20, 4), (8, 16), (14, 16), (14, 36), (26, 36), (26, 16), (32, 16)],
+            "DOWN": [(20, 36), (8, 24), (14, 24), (14, 4), (26, 4), (26, 24), (32, 24)],
+            "LEFT": [(4, 20), (16, 8), (16, 14), (36, 14), (36, 26), (16, 26), (16, 32)],
+            "RIGHT": [(36, 20), (24, 8), (24, 14), (4, 14), (4, 26), (24, 26), (24, 32)]
         }
 
         for dir_name, pontos in direcoes.items():
             img = Image.new("RGBA", tamanho, (0, 0, 0, 0))
             draw = ImageDraw.Draw(img)
-            draw.polygon(pontos, fill=cor_vermelha)
+            # Desenha o polígono com preenchimento e contorno
+            draw.polygon(pontos, fill=cor_vermelha, outline=cor_contorno, width=largura_contorno)
             self.nav_icons[dir_name] = ctk.CTkImage(img, size=tamanho)
 
     def criar_interface_grid(self):
