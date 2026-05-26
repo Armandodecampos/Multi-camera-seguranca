@@ -632,21 +632,21 @@ class CentralMonitoramento(ctk.CTk):
                                       segmented_button_selected_color=self.ACCENT_RED,
                                       segmented_button_unselected_hover_color=self.ACCENT_WINE,
                                       text_color=self.TEXT_P)
-        self.tabview.pack(expand=True, fill="both", padx=5, pady=5)
+        self.tabview.pack(expand=True, fill="both", padx=5, pady=(5, 0))
         self.tabview.add("Câmeras")
         self.tabview.add("Predefinições")
+
+        # Botão de Configurações (Sempre visível na base da sidebar)
+        self.btn_config = ctk.CTkButton(self.sidebar, text="⚙ Configurações",
+                                         fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
+                                         command=self.abrir_janela_configuracoes)
+        self.btn_config.pack(pady=10, padx=10, fill="x")
 
         # Conteúdo da Sidebar (Câmeras)
         tab_cams = self.tabview.tab("Câmeras")
 
         # Seletor de IP Manual
         self.criar_seletor_ip(tab_cams)
-
-        # Botão de Configurações
-        self.btn_config = ctk.CTkButton(tab_cams, text="⚙ Configurações",
-                                         fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
-                                         command=self.abrir_janela_configuracoes)
-        self.btn_config.pack(pady=10, padx=10, fill="x")
 
         self.frame_busca = ctk.CTkFrame(tab_cams, fg_color="transparent")
         self.frame_busca.pack(fill="x", padx=5, pady=5)
