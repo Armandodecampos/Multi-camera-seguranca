@@ -11,6 +11,7 @@ import requests
 from requests.auth import HTTPDigestAuth
 import subprocess
 import platform
+from tkinter import filedialog
 # Configuração de baixa latência para OpenCV/FFMPEG
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp;stimeout;3000000;buffer_size;2048000;analyzeduration;50000;probesize;50000;fflags;discardcorrupt;max_delay;500000;reorder_queue_size;16;rtsp_flags;prefer_tcp;reconnect;1;reconnect_streamed;1;reconnect_at_eof;1;allowed_media_types;video"
 cv2.setNumThreads(1)
@@ -666,7 +667,20 @@ class CentralMonitoramento(ctk.CTk):
         self.btn_salvar_predefinicao = ctk.CTkButton(tab_predefinicoes, text="Salvar Predefinição Atual",
                                                 fg_color=self.ACCENT_WINE, hover_color=self.ACCENT_RED,
                                                 command=self.salvar_predefinicao_atual)
-        self.btn_salvar_predefinicao.pack(fill="x", padx=10, pady=10)
+        self.btn_salvar_predefinicao.pack(fill="x", padx=10, pady=(10, 5))
+
+        frame_import_export = ctk.CTkFrame(tab_predefinicoes, fg_color="transparent")
+        frame_import_export.pack(fill="x", padx=10, pady=(0, 10))
+
+        self.btn_exportar_predefinicoes = ctk.CTkButton(frame_import_export, text="Exportar",
+                                                        fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
+                                                        command=self.exportar_predefinicoes)
+        self.btn_exportar_predefinicoes.pack(side="left", expand=True, fill="x", padx=(0, 2))
+
+        self.btn_importar_predefinicoes = ctk.CTkButton(frame_import_export, text="Importar",
+                                                        fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
+                                                        command=self.importar_predefinicoes)
+        self.btn_importar_predefinicoes.pack(side="left", expand=True, fill="x", padx=(2, 0))
 
         ctk.CTkLabel(tab_predefinicoes, text="LISTA DE PREDEFINIÇÕES", font=("Roboto", 14, "bold"), text_color=self.TEXT_S).pack(pady=5)
         self.scroll_predefinicoes = ctk.CTkScrollableFrame(tab_predefinicoes, fg_color=self.BG_LIST)
@@ -2645,6 +2659,44 @@ class CentralMonitoramento(ctk.CTk):
                 json.dump(self.predefinicoes, f, ensure_ascii=False, indent=4)
         except Exception as e:
             print(f"Erro ao salvar predefinicoes: {e}")
+
+    def exportar_predefinicoes(self):
+        caminho = filedialog.asksaveasfilename(
+            defaultextension=".json",
+            filetypes=[("Arquivos JSON", "*.json")],
+            initialfile="predefinicoes_abi.json",
+            title="Exportar Predefinições"
+        )
+        if caminho:
+            try:
+                with open(caminho, "w", encoding='utf-8') as f:
+                    json.dump(self.predefinicoes, f, ensure_ascii=False, indent=4)
+                self.abrir_modal_alerta("Sucesso", "Predefinições exportadas com sucesso!")
+            except Exception as e:
+                self.abrir_modal_alerta("Erro", f"Falha ao exportar predefinições: {e}")
+
+    def importar_predefinicoes(self):
+        caminho = filedialog.askopenfilename(
+            filetypes=[("Arquivos JSON", "*.json")],
+            title="Importar Predefinições"
+        )
+        if caminho:
+            try:
+                with open(caminho, "r", encoding='utf-8') as f:
+                    importados = json.load(f)
+
+                if not isinstance(importados, dict):
+                    self.abrir_modal_alerta("Erro", "O arquivo selecionado não é uma predefinição válida.")
+                    return
+
+                self.predefinicoes.update(importados)
+                self.salvar_predefinicoes()
+                self.atualizar_lista_predefinicoes_ui()
+                self.abrir_modal_alerta("Sucesso", f"{len(importados)} predefinições importadas com sucesso!")
+            except json.JSONDecodeError:
+                self.abrir_modal_alerta("Erro", "O arquivo selecionado contém um JSON inválido.")
+            except Exception as e:
+                self.abrir_modal_alerta("Erro", f"Falha ao importar predefinições: {e}")
 
     def salvar_predefinicao_atual(self):
         def on_name_entered(nome):
