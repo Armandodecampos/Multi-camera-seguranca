@@ -2365,23 +2365,26 @@ class CentralMonitoramento(ctk.CTk):
         return sorted(self.ips_unicos, key=chave_ordenacao)
 
     def _inicializar_icones_navegacao(self):
-        """Cria ícones de triângulos vermelhos simples para navegação."""
+        """Cria ícones de setas em bloco vermelhas com contorno branco para navegação."""
         self.nav_icons = {}
         tamanho = (40, 40)
         cor_vermelha = self.ACCENT_RED
+        cor_contorno = "white"
+        largura_contorno = 2
 
-        # Coordenadas para triângulos simples
+        # Coordenadas para setas em bloco (block arrows)
         direcoes = {
-            "UP": [(20, 10), (10, 30), (30, 30)],
-            "DOWN": [(10, 10), (30, 10), (20, 30)],
-            "LEFT": [(30, 10), (30, 30), (10, 20)],
-            "RIGHT": [(10, 10), (10, 30), (30, 20)]
+            "UP": [(20, 4), (8, 16), (14, 16), (14, 36), (26, 36), (26, 16), (32, 16)],
+            "DOWN": [(20, 36), (8, 24), (14, 24), (14, 4), (26, 4), (26, 24), (32, 24)],
+            "LEFT": [(4, 20), (16, 8), (16, 14), (36, 14), (36, 26), (16, 26), (16, 32)],
+            "RIGHT": [(36, 20), (24, 8), (24, 14), (4, 14), (4, 26), (24, 26), (24, 32)]
         }
 
         for dir_name, pontos in direcoes.items():
             img = Image.new("RGBA", tamanho, (0, 0, 0, 0))
             draw = ImageDraw.Draw(img)
-            draw.polygon(pontos, fill=cor_vermelha)
+            # Desenha o polígono com preenchimento e contorno
+            draw.polygon(pontos, fill=cor_vermelha, outline=cor_contorno, width=largura_contorno)
             self.nav_icons[dir_name] = ctk.CTkImage(img, size=tamanho)
 
     def criar_interface_grid(self):
@@ -2409,19 +2412,19 @@ class CentralMonitoramento(ctk.CTk):
         self.slot_frames = []
         # Botões de Navegação do Grid
         self.btn_nav_up = ctk.CTkButton(self.grid_frame, text="", width=40, height=40, corner_radius=20,
-                                        fg_color="transparent", bg_color="transparent", hover=False,
+                                        fg_color="transparent", bg_color="transparent", hover_color=self.ACCENT_WINE,
                                         image=self.nav_icons["UP"],
                                         command=lambda: self.navegar_grid("UP"))
         self.btn_nav_down = ctk.CTkButton(self.grid_frame, text="", width=40, height=40, corner_radius=20,
-                                          fg_color="transparent", bg_color="transparent", hover=False,
+                                          fg_color="transparent", bg_color="transparent", hover_color=self.ACCENT_WINE,
                                           image=self.nav_icons["DOWN"],
                                           command=lambda: self.navegar_grid("DOWN"))
         self.btn_nav_left = ctk.CTkButton(self.grid_frame, text="", width=40, height=40, corner_radius=20,
-                                          fg_color="transparent", bg_color="transparent", hover=False,
+                                          fg_color="transparent", bg_color="transparent", hover_color=self.ACCENT_WINE,
                                           image=self.nav_icons["LEFT"],
                                           command=lambda: self.navegar_grid("LEFT"))
         self.btn_nav_right = ctk.CTkButton(self.grid_frame, text="", width=40, height=40, corner_radius=20,
-                                           fg_color="transparent", bg_color="transparent", hover=False,
+                                           fg_color="transparent", bg_color="transparent", hover_color=self.ACCENT_WINE,
                                            image=self.nav_icons["RIGHT"],
                                            command=lambda: self.navegar_grid("RIGHT"))
 
