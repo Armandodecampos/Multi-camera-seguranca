@@ -11,7 +11,26 @@ import requests
 from requests.auth import HTTPDigestAuth
 import subprocess
 import platform
+import re
+import csv
+import base64
+from datetime import datetime
+from bs4 import BeautifulSoup
+from playwright.sync_api import sync_playwright
 from tkinter import filedialog
+
+# Configurações do Monitoramento Biométrico
+URL_LOGIN = "http://192.168.7.9:8098/bioLogin.do"
+USUARIO = "armando.campos"
+SENHA = "armandocampos.1"
+DIRETORIO_SAIDA = "relatorio_acessos"
+DIRETORIO_FOTOS = os.path.join(DIRETORIO_SAIDA, "fotos")
+ARQUIVO_CSV = os.path.join(DIRETORIO_SAIDA, "historico_acessos.csv")
+ARQUIVO_HTML = os.path.join(DIRETORIO_SAIDA, "relatorio_visual.html")
+
+# Cria as pastas caso não existam
+os.makedirs(DIRETORIO_FOTOS, exist_ok=True)
+
 # Configuração de baixa latência para OpenCV/FFMPEG
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp;stimeout;3000000;buffer_size;2048000;analyzeduration;50000;probesize;50000;fflags;discardcorrupt;max_delay;500000;reorder_queue_size;16;rtsp_flags;prefer_tcp;reconnect;1;reconnect_streamed;1;reconnect_at_eof;1;allowed_media_types;video"
 cv2.setNumThreads(1)
@@ -617,11 +636,16 @@ class CentralMonitoramento(ctk.CTk):
 
         # Controle da Sidebar
         self.sidebar_visible = True
+        self.sidebar_right_visible = False
+        self.monitoramento_biometrico_ativo = False
+        self.thread_biometria = None
 
         # --- LAYOUT ATUALIZADO ---
-        self.grid_columnconfigure(0, weight=0) # Sidebar fixa
-        self.grid_columnconfigure(1, weight=0) # Botão toggle fixo
+        self.grid_columnconfigure(0, weight=0) # Sidebar esquerda fixa
+        self.grid_columnconfigure(1, weight=0) # Botão toggle esquerda fixo
         self.grid_columnconfigure(2, weight=1) # Main expande
+        self.grid_columnconfigure(3, weight=0) # Botão toggle direita fixo
+        self.grid_columnconfigure(4, weight=0) # Sidebar direita fixa
         self.grid_rowconfigure(0, weight=1)
 
         # 1. Sidebar (Coluna 0)
@@ -716,6 +740,49 @@ class CentralMonitoramento(ctk.CTk):
         # 3. Main Frame (Coluna 2)
         self.main_frame = ctk.CTkFrame(self, fg_color=self.BG_MAIN, corner_radius=0)
         self.main_frame.grid(row=0, column=2, sticky="nsew")
+
+        # 4. Container Toggle Sidebar Direita (Coluna 3)
+        self.container_toggle_right = ctk.CTkFrame(self, fg_color=self.BG_PANEL, corner_radius=0)
+        self.container_toggle_right.grid(row=0, column=3, sticky="ns")
+
+        self.btn_toggle_sidebar_right = ctk.CTkButton(
+            self.container_toggle_right,
+            text="◀",
+            width=40,
+            corner_radius=0,
+            font=("Roboto", 24, "bold"),
+            fg_color=self.BG_PANEL,
+            hover_color=self.ACCENT_WINE,
+            text_color=self.ACCENT_RED,
+            command=self.toggle_sidebar_right
+        )
+        self.btn_toggle_sidebar_right.pack(side="left", fill="y")
+
+        self.lbl_biometria_vertical = ctk.CTkLabel(
+            self.container_toggle_right,
+            text="B\nI\nO\nM\nE\nT\nR\nI\nA",
+            font=("Roboto", 11, "bold"),
+            text_color=self.TEXT_S
+        )
+        self.lbl_biometria_vertical.pack(side="right", padx=(0, 2))
+
+        # 5. Sidebar Direita (Coluna 4)
+        self.sidebar_right = ctk.CTkFrame(self, width=320, corner_radius=0, fg_color=self.BG_SIDEBAR)
+        # Inicia oculta conforme self.sidebar_right_visible = False
+
+        ctk.CTkLabel(self.sidebar_right, text="MONITORAMENTO BIOMÉTRICO", font=("Roboto", 14, "bold"), text_color=self.TEXT_P).pack(pady=10)
+
+        self.btn_toggle_biometria = ctk.CTkButton(
+            self.sidebar_right,
+            text="Iniciar Monitoramento",
+            fg_color=self.ACCENT_WINE,
+            hover_color=self.ACCENT_RED,
+            command=self.toggle_monitoramento_biometrico
+        )
+        self.btn_toggle_biometria.pack(fill="x", padx=10, pady=5)
+
+        self.scroll_biometria = ctk.CTkScrollableFrame(self.sidebar_right, fg_color=self.BG_LIST)
+        self.scroll_biometria.pack(expand=True, fill="both", padx=5, pady=5)
 
         self.criar_interface_grid()
 
@@ -829,6 +896,16 @@ class CentralMonitoramento(ctk.CTk):
             self.sidebar.grid(row=0, column=0, sticky="nsew")
             self.btn_toggle_sidebar.configure(text="◀")
             self.sidebar_visible = True
+
+    def toggle_sidebar_right(self):
+        if self.sidebar_right_visible:
+            self.sidebar_right.grid_forget()
+            self.btn_toggle_sidebar_right.configure(text="◀")
+            self.sidebar_right_visible = False
+        else:
+            self.sidebar_right.grid(row=0, column=4, sticky="nsew")
+            self.btn_toggle_sidebar_right.configure(text="▶")
+            self.sidebar_right_visible = True
 
     # --- LÓGICA PTZ ---
     def ao_scroll_mouse(self, event):
@@ -1014,8 +1091,10 @@ class CentralMonitoramento(ctk.CTk):
         
         self.sidebar.grid_forget()
         self.container_toggle.grid_forget()
+        self.sidebar_right.grid_forget()
+        self.container_toggle_right.grid_forget()
 
-        self.main_frame.grid_configure(column=0, columnspan=3)
+        self.main_frame.grid_configure(column=0, columnspan=5)
 
         self.grid_frame.pack_forget()
         self.grid_frame.pack(expand=True, fill="both", padx=0, pady=0)
@@ -1045,6 +1124,10 @@ class CentralMonitoramento(ctk.CTk):
         
         self.container_toggle.grid(row=0, column=1, sticky="ns")
         self.main_frame.grid_configure(column=2, columnspan=1)
+
+        self.container_toggle_right.grid(row=0, column=3, sticky="ns")
+        if self.sidebar_right_visible:
+            self.sidebar_right.grid(row=0, column=4, sticky="nsew")
         
         self.grid_frame.pack_forget()
         padx_grid = 0 if self.slot_maximized is not None else 0
@@ -1092,9 +1175,16 @@ class CentralMonitoramento(ctk.CTk):
 
             # Re-grid Main Frame
             if self.em_tela_cheia:
-                self.main_frame.grid_configure(row=0, column=0, columnspan=3, sticky="nsew")
+                self.main_frame.grid_configure(row=0, column=0, columnspan=5, sticky="nsew")
             else:
                 self.main_frame.grid_configure(row=0, column=2, sticky="nsew")
+
+            # Re-grid Container Toggle Direita
+            self.container_toggle_right.grid(row=0, column=3, sticky="ns")
+
+            # Re-grid Sidebar Direita
+            if getattr(self, 'sidebar_right_visible', False):
+                self.sidebar_right.grid(row=0, column=4, sticky="nsew")
 
             self.update_idletasks()
         except Exception as e:
@@ -3058,6 +3148,456 @@ class CentralMonitoramento(ctk.CTk):
                 self.abrir_modal_alerta("Erro", f"Falha ao salvar imagem: {e}")
         else:
             self.abrir_modal_alerta("Erro", "Não foi possível obter um frame válido da câmera.")
+
+    # --- MÉTODOS DE MONITORAMENTO BIOMÉTRICO ---
+    def inicializar_arquivos_biometria(self):
+        """Garante que o arquivo CSV possua cabeçalho adequado."""
+        if not os.path.exists(ARQUIVO_CSV):
+            with open(ARQUIVO_CSV, mode='w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow(["Data_Registro", "ID", "Nome", "Evento", "Data_Evento", "Caminho_Foto"])
+
+    def salvar_foto_biometria(self, base64_data, id_usuario, data_evento):
+        """Decodifica a string Base64 da imagem e salva em arquivo local."""
+        if not base64_data:
+            return ""
+
+        # Normaliza a string base64 se necessário
+        if "," in base64_data:
+            base64_data = base64_data.split(",")[1]
+
+        try:
+            # Sanitiza a data para usar no nome do arquivo de imagem
+            data_safe = re.sub(r'[^0-9]', '_', data_evento)
+            nome_arquivo = f"{id_usuario}_{data_safe}.jpg"
+            caminho_completo = os.path.join(DIRETORIO_FOTOS, nome_arquivo)
+
+            # Converte e grava a imagem em disco
+            with open(caminho_completo, "wb") as f:
+                f.write(base64.b64decode(base64_data))
+            return caminho_completo
+        except Exception as e:
+            print(f"[-] Erro ao salvar a imagem do usuário {id_usuario}: {e}")
+            return ""
+
+    def registrar_evento_biometria(self, id_usuario, nome, evento, data_evento, base64_foto, page):
+        """Registra as informações capturadas no CSV, no HTML e injeta na barra lateral do navegador."""
+        # Salva a imagem localmente
+        caminho_foto_local = self.salvar_foto_biometria(base64_foto, id_usuario, data_evento)
+        data_registro = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # 1. Registrar no CSV
+        with open(ARQUIVO_CSV, mode='a', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow([data_registro, id_usuario, nome, evento, data_evento, caminho_foto_local])
+
+        print(f"[+] NOVO ACESSO REGISTRADO: {id_usuario} - {nome} | Evento: {evento} | Data: {data_evento}")
+
+        # 2. Atualizar Relatório HTML em disco
+        self.atualizar_relatorio_html_biometria()
+
+        # 3. Injetar novo registro na barra lateral em tempo real dentro do navegador
+        self.injetar_na_barra_lateral_do_navegador(page, id_usuario, nome, evento, data_evento, base64_foto)
+
+        # 4. Atualizar interface do sistema local
+        self.after(0, self.adicionar_card_biometria_ui, id_usuario, nome, evento, data_evento, base64_foto)
+
+    def atualizar_relatorio_html_biometria(self):
+        """Gera ou atualiza o dashboard estático externo em HTML para visualização dos registros."""
+        registros = []
+        if os.path.exists(ARQUIVO_CSV):
+            with open(ARQUIVO_CSV, mode='r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                registros = list(reader)
+                registros.reverse()  # Mais recentes no topo
+
+        html_content = f"""<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Relatório de Monitoramento Biométrico</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 text-gray-100 font-sans min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        <header class="mb-8 border-b border-gray-800 pb-4">
+            <h1 class="text-3xl font-bold text-teal-400">Relatório de Monitoramento Biométrico</h1>
+            <p class="text-gray-400">Última atualização: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}</p>
+        </header>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+    """
+
+        for r in registros:
+            caminho_foto = r.get('Caminho_Foto', '')
+            if caminho_foto:
+                nome_arquivo = os.path.basename(caminho_foto)
+                img_tag_src = f"fotos/{nome_arquivo}"
+            else:
+                img_tag_src = "https://via.placeholder.com/150"
+
+            html_content += f"""
+                <div class="bg-gray-800 rounded-xl overflow-hidden shadow-lg border border-gray-700 transition hover:scale-[1.02] duration-300">
+                    <div class="p-4 flex justify-center bg-gray-950">
+                        <img class="h-44 object-contain rounded-lg border border-gray-700" src="{img_tag_src}" alt="Foto de {r['Nome']}" onerror="this.src='https://via.placeholder.com/150'">
+                    </div>
+                    <div class="p-4">
+                        <span class="inline-block px-2.5 py-1 text-xs font-semibold rounded-full bg-teal-900/50 text-teal-300 mb-2 border border-teal-800">
+                            ID: {r['ID']}
+                        </span>
+                        <h3 class="text-lg font-bold text-white truncate">{r['Nome']}</h3>
+                        <p class="text-sm text-yellow-400 font-medium mt-1">{r['Evento']}</p>
+
+                        <div class="mt-4 pt-3 border-t border-gray-700 text-xs text-gray-400 flex flex-col gap-1">
+                            <div><strong class="text-gray-300">Evento em:</strong> {r['Data_Evento']}</div>
+                            <div><strong class="text-gray-300">Coletado em:</strong> {r['Data_Registro']}</div>
+                        </div>
+                    </div>
+                </div>
+            """
+
+        html_content += """
+            </div>
+        </div>
+    </body>
+    </html>
+        """
+
+        with open(ARQUIVO_HTML, "w", encoding="utf-8") as f:
+            f.write(html_content)
+
+    def criar_estrutura_barra_lateral_navegador(self, page):
+        """Injeta o painel lateral de forma sobreposta no canto direito sem quebrar os elementos originais da página."""
+        try:
+            foi_injetada = page.evaluate("""() => {
+                if (document.getElementById('painel-lateral-registro')) return false;
+
+                const style = document.createElement('style');
+                style.id = 'estilos-barra-lateral-segura';
+                style.innerHTML = `
+                    html, body {
+                        width: auto !important;
+                        margin-right: 400px !important;
+                        box-sizing: border-box !important;
+                        transition: margin-right 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+                    }
+                    body {
+                        overflow-x: auto !important;
+                    }
+                    body.somente-registros {
+                        margin-right: 0px !important;
+                    }
+                    body.somente-registros > :not(#painel-lateral-registro):not(style):not(script) {
+                        display: none !important;
+                    }
+                    body.somente-registros #painel-lateral-registro {
+                        width: 100% !important;
+                        border-left: none !important;
+                    }
+                `;
+                document.head.appendChild(style);
+
+                const sidebar = document.createElement('div');
+                sidebar.id = 'painel-lateral-registro';
+                sidebar.style.position = 'fixed';
+                sidebar.style.top = '0';
+                sidebar.style.right = '0';
+                sidebar.style.width = '400px';
+                sidebar.style.height = '100vh';
+                sidebar.style.backgroundColor = '#111827';
+                sidebar.style.borderLeft = '4px solid #14b8a6';
+                sidebar.style.color = '#f3f4f6';
+                sidebar.style.fontFamily = 'Segoe UI, Tahoma, Geneva, Verdana, sans-serif';
+                sidebar.style.display = 'flex';
+                sidebar.style.flexDirection = 'column';
+                sidebar.style.boxSizing = 'border-box';
+                sidebar.style.zIndex = '2147483647';
+                sidebar.style.transition = 'width 0.25s cubic-bezier(0.4, 0, 0.2, 1)';
+
+                sidebar.innerHTML = `
+                    <div style="padding: 16px; border-bottom: 1px solid #374151; background-color: #1f2937; display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+                        <div style="min-width: 0; flex: 1;">
+                            <h2 style="margin: 0; color: #14b8a6; font-size: 16px; font-weight: bold; letter-spacing: 0.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Painel de Acessos</h2>
+                            <p style="margin: 2px 0 0 0; color: #9ca3af; font-size: 11px;">Monitoramento em Tempo Real</p>
+                        </div>
+                        <button id="btn-toggle-exibicao" style="background-color: #14b8a6; color: #111827; border: none; padding: 6px 12px; border-radius: 4px; font-size: 11px; font-weight: bold; cursor: pointer; transition: all 0.2s ease; outline: none; white-space: nowrap; flex-shrink: 0;">
+                            Focar Registros
+                        </button>
+                    </div>
+                    <div id="lista-acessos" style="padding: 12px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 12px; background-color: #111827;">
+                        <div id="mensagem-vazia" style="text-align: center; color: #6b7280; padding: 40px 10px; font-size: 13px; font-style: italic;">
+                            Aguardando detecção de novos acessos biométricos...
+                        </div>
+                    </div>
+                `;
+
+                document.body.appendChild(sidebar);
+
+                const btnToggle = sidebar.querySelector('#btn-toggle-exibicao');
+                btnToggle.addEventListener('click', () => {
+                    const modoFocoAtivo = document.body.classList.toggle('somente-registros');
+                    if (modoFocoAtivo) {
+                        btnToggle.textContent = 'Mostrar Site';
+                        btnToggle.style.backgroundColor = '#f59e0b';
+                        btnToggle.style.color = '#ffffff';
+                    } else {
+                        btnToggle.textContent = 'Focar Registros';
+                        btnToggle.style.backgroundColor = '#14b8a6';
+                        btnToggle.style.color = '#111827';
+                    }
+                });
+
+                return true;
+            }""")
+
+            if foi_injetada:
+                print("[+] Divisão de tela não intrusiva aplicada com sucesso.")
+
+        except Exception as e:
+            print(f"[!] Erro ao injetar estrutura da barra lateral segura: {e}")
+
+    def injetar_na_barra_lateral_do_navegador(self, page, id_usuario, nome, evento, data_evento, base64_foto):
+        """Injeta dinamicamente o card com foto e dados na barra lateral activa no navegador."""
+        try:
+            src_imagem = base64_foto if base64_foto else "/images/userImage.gif"
+
+            page.evaluate(f"""(dados) => {{
+                const lista = document.getElementById('lista-acessos');
+                const msgVazia = document.getElementById('mensagem-vazia');
+                if (msgVazia) msgVazia.remove();
+
+                const card = document.createElement('div');
+                card.style.backgroundColor = '#1f2937';
+                card.style.border = '1px solid #374151';
+                card.style.borderRadius = '8px';
+                card.style.padding = '12px';
+                card.style.display = 'flex';
+                card.style.gap = '12px';
+                card.style.alignItems = 'center';
+                card.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1)';
+                card.style.transition = 'all 0.3s ease';
+
+                card.innerHTML = `
+                    <img src="${{dados.src_imagem}}" style="width: 75px; height: 75px; border-radius: 6px; object-fit: cover; border: 1px solid #4b5563; background-color: #030712;" onerror="this.src='/images/userImage.gif'">
+                    <div style="flex: 1; min-width: 0;">
+                        <div style="font-size: 11px; background-color: rgba(20, 184, 166, 0.15); color: #2dd4bf; display: inline-block; padding: 2px 6px; border-radius: 4px; font-weight: bold; margin-bottom: 4px;">
+                            ID: ${{dados.id_usuario}}
+                        </div>
+                        <div style="font-size: 13px; font-weight: bold; color: #ffffff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${{dados.nome}}">
+                            ${{dados.nome}}
+                        </div>
+                        <div style="font-size: 11px; color: #facc15; margin-top: 2px; font-weight: 500;">
+                            ${{dados.evento}}
+                        </div>
+                        <div style="font-size: 10px; color: #9ca3af; margin-top: 6px; display: flex; justify-content: space-between;">
+                            <span>${{dados.data_evento}}</span>
+                        </div>
+                    </div>
+                `;
+
+                lista.insertBefore(card, lista.firstChild);
+            }}""", {
+                "id_usuario": id_usuario,
+                "nome": nome,
+                "evento": evento,
+                "data_evento": data_evento,
+                "src_imagem": src_imagem
+            })
+        except Exception as e:
+            print(f"[!] Falha ao atualizar a barra lateral do navegador: {e}")
+
+    def extrair_dados_notificacao_biometria(self, html_interno):
+        """Faz o parse do HTML interno da notificação para extrair os dados e a imagem."""
+        soup = BeautifulSoup(html_interno, 'html.parser')
+
+        img_tag = soup.find('img')
+        base64_foto = ""
+        if img_tag and img_tag.get('src'):
+            src = img_tag.get('src')
+            if "base64," in src:
+                base64_foto = src
+
+        p_tags = soup.find_all('p')
+        if len(p_tags) >= 3:
+            identificacao = p_tags[0].get_text(strip=True)
+            evento = p_tags[1].get_text(strip=True)
+            data_evento = p_tags[2].get_text(strip=True)
+
+            match = re.match(r"(\d+)\((.+)\)", identificacao)
+            if match:
+                id_usuario = match.group(1)
+                nome_usuario = match.group(2)
+            else:
+                id_usuario = "Desconhecido"
+                nome_usuario = identificacao
+
+            return id_usuario, nome_usuario, evento, data_evento, base64_foto
+
+        return None
+
+    def toggle_monitoramento_biometrico(self):
+        if self.monitoramento_biometrico_ativo:
+            self.monitoramento_biometrico_ativo = False
+            self.btn_toggle_biometria.configure(text="Iniciar Monitoramento", fg_color=self.ACCENT_WINE)
+        else:
+            self.monitoramento_biometrico_ativo = True
+            self.btn_toggle_biometria.configure(text="Parar Monitoramento", fg_color=self.ACCENT_RED)
+            self.thread_biometria = threading.Thread(target=self.executar_monitoramento_loop, daemon=True)
+            self.thread_biometria.start()
+
+    def executar_monitoramento_loop(self):
+        self.inicializar_arquivos_biometria()
+
+        with sync_playwright() as p:
+            browser = None
+            try:
+                # Tenta Chromium, depois Chrome, depois Edge
+                try:
+                    browser = p.chromium.launch(headless=False)
+                except:
+                    try:
+                        browser = p.chromium.launch(headless=False, channel="chrome")
+                    except:
+                        browser = p.chromium.launch(headless=False, channel="msedge")
+
+                context = browser.new_context(no_viewport=True)
+                page = context.new_page()
+
+                print(f"[*] Acessando {URL_LOGIN}...")
+                page.goto(URL_LOGIN)
+
+                page.wait_for_selector("#username", timeout=15000)
+                page.wait_for_selector("#password", timeout=15000)
+
+                print("[*] Efetuando o login automático...")
+                page.fill("#username", USUARIO)
+                page.fill("#password", SENHA)
+                page.wait_for_timeout(500)
+
+                btn_login = page.locator("input[type='submit'], button, a.login-btn")
+                btn_login.first.click()
+
+                print("[*] Aguardando redirecionamento para a página inicial...")
+                page.wait_for_url(re.compile(r"(main|dashboard)\.do"), timeout=30000)
+                print("[+] Login efetuado com sucesso!")
+
+                page.wait_for_timeout(5000)
+                self.criar_estrutura_barra_lateral_navegador(page)
+
+                ultimos_eventos_processados = set()
+
+                while self.monitoramento_biometrico_ativo:
+                    try:
+                        self.criar_estrutura_barra_lateral_navegador(page)
+                        fontes = [page] + page.frames
+
+                        for fonte in fontes:
+                            try:
+                                if "192.168.7.9" not in fonte.url and "about:blank" not in fonte.url:
+                                    continue
+
+                                elementos_alvo = fonte.locator("div[style*='text-align: center']").all()
+
+                                for el in elementos_alvo:
+                                    html_interno = el.inner_html()
+                                    if "<p>" in html_interno and "</p>" in html_interno:
+                                        dados = self.extrair_dados_notificacao_biometria(html_interno)
+                                        if dados:
+                                            id_usuario, nome_usuario, evento, data_evento, base64_foto = dados
+                                            chave_evento = f"{id_usuario}_{data_evento}"
+
+                                            if chave_evento not in ultimos_eventos_processados:
+                                                self.registrar_evento_biometria(id_usuario, nome_usuario, evento, data_evento, base64_foto, page)
+                                                ultimos_eventos_processados.add(chave_evento)
+                                                if len(ultimos_eventos_processados) > 500:
+                                                    ultimos_eventos_processados.pop()
+                            except:
+                                continue
+
+                        page.wait_for_timeout(500)
+
+                    except Exception as loop_error:
+                        print(f"[!] Aviso no loop de monitoramento: {loop_error}")
+                        page.wait_for_timeout(2000)
+                        if not self.monitoramento_biometrico_ativo:
+                            break
+
+            except Exception as e:
+                print(f"[-] Erro crítico no monitoramento: {e}")
+            finally:
+                if browser:
+                    browser.close()
+                print("[*] Monitoramento biometria encerrado.")
+                self.monitoramento_biometrico_ativo = False
+                self.after(0, lambda: self.btn_toggle_biometria.configure(text="Iniciar Monitoramento", fg_color=self.ACCENT_WINE))
+
+    def adicionar_card_biometria_ui(self, id_usuario, nome, evento, data_evento, base64_foto):
+        """Adiciona um card visual com os dados do acesso na barra lateral direita."""
+        cor_card = "#1F2937"
+        cor_borda = "#374151"
+        cor_texto_p = "#FFFFFF"
+        cor_texto_s = "#9CA3AF"
+        cor_destaque = "#2DD4BF"
+        cor_evento = "#FACC15"
+
+        frm_card = ctk.CTkFrame(self.scroll_biometria, fg_color=cor_card, border_width=1, border_color=cor_borda, corner_radius=8)
+        # Insere no topo
+        frm_card.pack(fill="x", pady=5, padx=2, side="top")
+
+        # Se houver foto, decodifica e exibe
+        try:
+            if base64_foto:
+                if "," in base64_foto:
+                    base64_foto = base64_foto.split(",")[1]
+                import io
+                img_data = base64.b64decode(base64_foto)
+                img_pil = Image.open(io.BytesIO(img_data))
+                # Redimensiona para miniatura
+                img_pil.thumbnail((75, 75))
+                img_ctk = ctk.CTkImage(img_pil, size=(75, 75))
+                lbl_foto = ctk.CTkLabel(frm_card, image=img_ctk, text="", width=75, height=75)
+                lbl_foto.pack(side="left", padx=10, pady=10)
+            else:
+                # Placeholder se não houver foto
+                lbl_foto = ctk.CTkLabel(frm_card, text="SEM\nFOTO", width=75, height=75, fg_color="#030712", corner_radius=6)
+                lbl_foto.pack(side="left", padx=10, pady=10)
+        except Exception as e:
+            print(f"Erro ao carregar foto no card UI: {e}")
+            lbl_foto = ctk.CTkLabel(frm_card, text="ERRO\nFOTO", width=75, height=75, fg_color="#030712", corner_radius=6)
+            lbl_foto.pack(side="left", padx=10, pady=10)
+
+        # Container de Texto
+        container_texto = ctk.CTkFrame(frm_card, fg_color="transparent")
+        container_texto.pack(side="left", fill="both", expand=True, padx=(0, 10), pady=10)
+
+        # ID
+        lbl_id = ctk.CTkLabel(container_texto, text=f"ID: {id_usuario}", font=("Roboto", 10, "bold"),
+                              text_color=cor_destaque, fg_color="rgba(20, 184, 166, 0.15)", corner_radius=4)
+        lbl_id.pack(anchor="w", pady=(0, 2))
+
+        # Nome
+        lbl_nome = ctk.CTkLabel(container_texto, text=nome, font=("Roboto", 12, "bold"),
+                                text_color=cor_texto_p, anchor="w", justify="left", wraplength=180)
+        lbl_nome.pack(fill="x", anchor="w")
+
+        # Evento
+        lbl_evento = ctk.CTkLabel(container_texto, text=evento, font=("Roboto", 11, "medium"),
+                                  text_color=cor_evento, anchor="w")
+        lbl_evento.pack(fill="x", anchor="w", pady=(2, 0))
+
+        # Data
+        lbl_data = ctk.CTkLabel(container_texto, text=data_evento, font=("Roboto", 9),
+                                text_color=cor_texto_s, anchor="w")
+        lbl_data.pack(fill="x", anchor="w", pady=(4, 0))
+
+        # Força o scroll para o topo para ver o novo evento
+        try:
+            self.update_idletasks()
+            canvas = getattr(self.scroll_biometria, "_parent_canvas", None) or getattr(self.scroll_biometria, "_canvas", None)
+            if canvas:
+                canvas.yview_moveto(0)
+        except: pass
 
 if __name__ == "__main__":
     dados_sistema = carregar_dados_sistema()
