@@ -3573,7 +3573,7 @@ class CentralMonitoramento(ctk.CTk):
 
         # ID
         lbl_id = ctk.CTkLabel(container_texto, text=f"ID: {id_usuario}", font=("Roboto", 10, "bold"),
-                              text_color=cor_destaque, fg_color="rgba(20, 184, 166, 0.15)", corner_radius=4)
+                              text_color=cor_destaque, fg_color="transparent", corner_radius=4)
         lbl_id.pack(anchor="w", pady=(0, 2))
 
         # Nome
@@ -3582,7 +3582,7 @@ class CentralMonitoramento(ctk.CTk):
         lbl_nome.pack(fill="x", anchor="w")
 
         # Evento
-        lbl_evento = ctk.CTkLabel(container_texto, text=evento, font=("Roboto", 11, "medium"),
+        lbl_evento = ctk.CTkLabel(container_texto, text=evento, font=("Roboto", 11, "normal"),
                                   text_color=cor_evento, anchor="w")
         lbl_evento.pack(fill="x", anchor="w", pady=(2, 0))
 
