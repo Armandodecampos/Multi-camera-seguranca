@@ -3247,10 +3247,11 @@ class CentralMonitoramento(ctk.CTk):
                             ID: {r['ID']}
                         </span>
                         <h3 class="text-lg font-bold text-white truncate">{r['Nome']}</h3>
-                        <p class="text-sm text-yellow-400 font-medium mt-1">{r['Evento']}</p>
+                        <p class="text-sm text-teal-400 font-medium mt-1">{r.get('Dispositivo', 'N/A')}</p>
+                        <p class="text-xs text-yellow-400 font-medium mt-1">{r['Evento']}</p>
 
                         <div class="mt-4 pt-3 border-t border-gray-700 text-xs text-gray-400 flex flex-col gap-1">
-                            <div><strong class="text-gray-300">Evento em:</strong> {r['Data_Evento']}</div>
+                            <div><strong class="text-gray-300">Horário:</strong> {r['Data_Evento']}</div>
                             <div><strong class="text-gray-300">Coletado em:</strong> {r['Data_Registro']}</div>
                         </div>
                     </div>
@@ -3420,9 +3421,16 @@ class CentralMonitoramento(ctk.CTk):
 
         p_tags = soup.find_all('p')
         if len(p_tags) >= 3:
-            identificacao = p_tags[0].get_text(strip=True)
-            evento = p_tags[1].get_text(strip=True)
-            data_evento = p_tags[2].get_text(strip=True)
+            if len(p_tags) >= 4:
+                identificacao = p_tags[0].get_text(strip=True)
+                dispositivo = p_tags[1].get_text(strip=True)
+                evento = p_tags[2].get_text(strip=True)
+                data_evento = p_tags[3].get_text(strip=True)
+            else:
+                identificacao = p_tags[0].get_text(strip=True)
+                dispositivo = "N/A"
+                evento = p_tags[1].get_text(strip=True)
+                data_evento = p_tags[2].get_text(strip=True)
 
             match = re.match(r"(\d+)\((.+)\)", identificacao)
             if match:
@@ -3432,7 +3440,7 @@ class CentralMonitoramento(ctk.CTk):
                 id_usuario = "Desconhecido"
                 nome_usuario = identificacao
 
-            return id_usuario, nome_usuario, evento, data_evento, base64_foto
+            return id_usuario, nome_usuario, dispositivo, evento, data_evento, base64_foto
 
         return None
 
