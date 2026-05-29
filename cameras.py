@@ -519,12 +519,14 @@ class CentralMonitoramento(ctk.CTk):
         self.arquivo_html_bio = os.path.join(self.diretorio_bio, "relatorio_visual.html")
         os.makedirs(self.diretorio_fotos_bio, exist_ok=True)
 
-        self.url_bio = ""
-        self.usuario_bio = ""
-        self.senha_bio = ""
-        self.monitoramento_bio_ativo = False
+        self.url_bio = "http://192.168.7.9:8098/bioLogin.do"
+        self.usuario_bio = "armando.campos"
+        self.senha_bio = "armandocampos.1"
+        self.monitoramento_bio_ativo = True
+        self.data_sistema_bio = datetime.now().strftime("%Y-%m-%d")
         self.fila_eventos_bio = queue.Queue()
         self.processados_bio = set()
+        self.fotos_processadas_bio = set()
         self.carregar_config_biometria()
 
         self.botoes_referencia = {}
@@ -1185,10 +1187,10 @@ class CentralMonitoramento(ctk.CTk):
             try:
                 with open(self.arquivo_biometria, "r", encoding='utf-8') as f:
                     dados = json.load(f)
-                    self.url_bio = dados.get("url", "")
-                    self.usuario_bio = dados.get("usuario", "")
-                    self.senha_bio = dados.get("senha", "")
-                    self.monitoramento_bio_ativo = dados.get("ativo", False)
+                    self.url_bio = dados.get("url", "http://192.168.7.9:8098/bioLogin.do")
+                    self.usuario_bio = dados.get("usuario", "armando.campos")
+                    self.senha_bio = dados.get("senha", "armandocampos.1")
+                    self.monitoramento_bio_ativo = dados.get("ativo", True)
                     self.sidebar_bio_visible = dados.get("sidebar_visible", True)
             except: pass
 
@@ -2241,6 +2243,16 @@ class CentralMonitoramento(ctk.CTk):
                     except: pass
         self.atualizar_botoes_controle()
 
+    def normalizar_data_biometria(self, data_str):
+        if not data_str:
+            return f"{self.data_sistema_bio} {datetime.now().strftime('%H:%M:%S')}"
+        if re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$", data_str):
+            self.data_sistema_bio = data_str.split(' ')[0]
+            return data_str
+        if re.match(r"^\d{2}:\d{2}:\d{2}$", data_str):
+            return f"{self.data_sistema_bio} {data_str}"
+        return data_str
+
     def extrair_dados_notificacao_biometria(self, html_interno):
         soup = BeautifulSoup(html_interno, 'html.parser')
         img_tag = soup.find('img')
@@ -2307,43 +2319,48 @@ class CentralMonitoramento(ctk.CTk):
         data_registro = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         novo_registro = [data_registro, id_usuario, nome, evento, dispositivo, leitor, data_evento, caminho_foto_local]
 
-        # Sincroniza CSV (Append-only mode para novos registros, rewrite apenas para mesclar fotos)
-        registros_existentes = []
+        # Otimização de Performance:
+        # 1. Se for apenas um novo evento (sem foto), usamos APPEND puro.
+        # 2. Se for uma atualização (foto chegando depois), reescrevemos o arquivo.
+
+        # Para saber se é uma atualização, verificamos se o ID+Data já existe em fotos_processadas_bio
+        # Note: fotos_processadas_bio guarda eventos QUE JÁ TEM FOTO.
+
         mesclado = False
 
-        if os.path.exists(self.arquivo_csv_bio):
-            try:
-                with open(self.arquivo_csv_bio, mode='r', encoding='utf-8') as f:
-                    reader = csv.reader(f)
-                    cabecalho = next(reader, None)
-                    for row in reader:
-                        if len(row) >= 8:
-                            if row[1] == id_usuario and row[6] == data_evento:
-                                # Mescla se necessário
-                                if (not row[7] and caminho_foto_local) or (not row[5] and leitor) or ((not row[4] or row[4] == "N/A") and dispositivo and dispositivo != "N/A"):
-                                    if not row[7] and caminho_foto_local: row[7] = caminho_foto_local
-                                    if not row[5] and leitor: row[5] = leitor
-                                    if (not row[4] or row[4] == "N/A") and dispositivo and dispositivo != "N/A": row[4] = dispositivo
-                                    mesclado = True
-                                else:
-                                    # Já existe e está completo, não faz nada
-                                    mesclado = "IGNORAR"
+        if base64_foto:
+            # Tentativa de mesclagem: precisamos ler o arquivo para atualizar a linha
+            registros_existentes = []
+            atualizado_em_disco = False
+            if os.path.exists(self.arquivo_csv_bio):
+                try:
+                    with open(self.arquivo_csv_bio, mode='r', encoding='utf-8') as f:
+                        reader = csv.reader(f)
+                        cabecalho = next(reader, None)
+                        for row in reader:
+                            if len(row) >= 8:
+                                if row[1] == id_usuario and row[6] == data_evento:
+                                    if not row[7] and caminho_foto_local:
+                                        row[7] = caminho_foto_local
+                                        atualizado_em_disco = True
+                                    if not row[5] and leitor:
+                                        row[5] = leitor
+                                        atualizado_em_disco = True
+                                    if (not row[4] or row[4] == "N/A") and dispositivo and dispositivo != "N/A":
+                                        row[4] = dispositivo
+                                        atualizado_em_disco = True
                             registros_existentes.append(row)
-            except: pass
 
-        if mesclado == "IGNORAR":
-            return # Já temos esse registro completo
+                    if atualizado_em_disco:
+                        with open(self.arquivo_csv_bio, mode='w', newline='', encoding='utf-8') as f:
+                            writer = csv.writer(f)
+                            writer.writerow(["Data_Registro", "ID", "Nome", "Evento", "Dispositivo", "Leitor", "Data_Evento", "Caminho_Foto"])
+                            writer.writerows(registros_existentes)
+                        mesclado = True
+                except: pass
 
-        if mesclado:
-            # Reescreve o arquivo pois houve mesclagem
-            try:
-                with open(self.arquivo_csv_bio, mode='w', newline='', encoding='utf-8') as f:
-                    writer = csv.writer(f)
-                    writer.writerow(["Data_Registro", "ID", "Nome", "Evento", "Dispositivo", "Leitor", "Data_Evento", "Caminho_Foto"])
-                    writer.writerows(registros_existentes)
-            except: pass
-        else:
-            # Novo registro: Append-only
+        if not mesclado:
+            # É um novo evento (ou a foto veio junto no primeiro registro)
             if not os.path.exists(self.arquivo_csv_bio):
                 with open(self.arquivo_csv_bio, mode='w', newline='', encoding='utf-8') as f:
                     writer = csv.writer(f)
@@ -2439,37 +2456,55 @@ class CentralMonitoramento(ctk.CTk):
                     fontes = [page] + page.frames
                     for fonte in fontes:
                         try:
-                            if self.url_bio.split("//")[-1].split(":")[0] not in fonte.url: continue
+                            if "192.168.7.9" not in fonte.url and "about:blank" not in fonte.url: continue
 
-                            # Tabela Real
+                            # --- ORIGEM 1: Varredura na Tabela (Eventos sem foto) ---
                             linhas = self.extrair_linhas_tabela_biometria(fonte)
                             for linha in linhas:
                                 match = re.match(r"(\d+)\((.+)\)", linha["pessoa"])
                                 id_user, nome_user = (match.group(1), match.group(2)) if match else ("Desconhecido", linha["pessoa"])
-                                data_ev = linha["horario"]
+                                data_ev = self.normalizar_data_biometria(linha["horario"])
+
+                                evento = linha["evento"]
+                                if "Verificação de abertura normal" in evento:
+                                    evento = evento.replace("Verificação de abertura normal", "").strip()
+
+                                disp = linha["dispositivo"]
+                                if disp == "Geral": disp = ""
+
                                 chave = f"{id_user}_{data_ev}"
                                 if chave not in self.processados_bio:
-                                    self.fila_eventos_bio.put((id_user, nome_user, linha["evento"], linha["dispositivo"], linha["leitor"], data_ev, ""))
+                                    self.fila_eventos_bio.put((id_user, nome_user, evento, disp, linha["leitor"], data_ev, ""))
                                     self.processados_bio.add(chave)
 
-                            # Popups (Fotos)
-                            popups = fonte.locator("div[style*='text-align: center']").all()
-                            for p_el in popups:
-                                html = p_el.inner_html()
-                                if "<p>" in html:
-                                    dados = self.extrair_dados_notificacao_biometria(html)
+                            # --- ORIGEM 2: Captura do Pop-up (Para fotos) ---
+                            elementos_alvo = fonte.locator("div[style*='text-align: center']").all()
+                            for el in elementos_alvo:
+                                html_interno = el.inner_html()
+                                if "<p>" in html_interno:
+                                    dados = self.extrair_dados_notificacao_biometria(html_interno)
                                     if dados:
-                                        id_user, nome_user, evento, disp, data_ev, b64, leitor = dados
+                                        id_user, nome_user, evento, disp, data_ev_raw, b64, leitor_popup = dados
+                                        data_ev = self.normalizar_data_biometria(data_ev_raw)
+
+                                        if "Verificação de abertura normal" in evento:
+                                            evento = evento.replace("Verificação de abertura normal", "").strip()
+                                        if disp == "Geral": disp = ""
+
                                         chave = f"{id_user}_{data_ev}"
-                                        if b64 and chave not in self.processados_bio: # Se achou com foto e ainda não processou
-                                            self.fila_eventos_bio.put((id_user, nome_user, evento, disp, leitor, data_ev, b64))
-                                            self.processados_bio.add(chave)
-                                        elif b64: # Se achou com foto e já processou (provavelmente sem foto antes), re-envia para atualizar
-                                            self.fila_eventos_bio.put((id_user, nome_user, evento, disp, leitor, data_ev, b64))
+
+                                        if b64:
+                                            if chave not in self.fotos_processadas_bio:
+                                                self.fila_eventos_bio.put((id_user, nome_user, evento, disp, leitor_popup, data_ev, b64))
+                                                self.processados_bio.add(chave)
+                                                self.fotos_processadas_bio.add(chave)
                         except: continue
 
-                    if len(self.processados_bio) > 1000: self.processados_bio.clear()
-                    page.wait_for_timeout(500)
+                    if len(self.processados_bio) > 1000:
+                        self.processados_bio.clear()
+                        self.fotos_processadas_bio.clear()
+
+                    page.wait_for_timeout(250)
                 browser.close()
             except Exception as e:
                 print(f"[-] Erro Biometria: {e}")
