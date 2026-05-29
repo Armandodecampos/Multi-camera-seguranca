@@ -454,8 +454,8 @@ class CentralMonitoramento(ctk.CTk):
 
     # Configurações Biometria (Padrões)
     URL_LOGIN_BIO = "http://192.168.7.9:8098/bioLogin.do"
-    USUARIO_BIO = ""
-    SENHA_BIO = ""
+    USUARIO_BIO = "armando.campos"
+    SENHA_BIO = "armandocampos.1"
 
     def configurar_variaveis_grid(self, num_slots):
         """Define as dimensões do grid com base na quantidade de slots."""
@@ -782,10 +782,26 @@ class CentralMonitoramento(ctk.CTk):
         self.sidebar_biometria = ctk.CTkFrame(self, width=350, corner_radius=0, fg_color=self.BG_SIDEBAR)
         # Não damos grid() aqui ainda
 
-        ctk.CTkLabel(self.sidebar_biometria, text="EVENTOS EM TEMPO REAL", font=("Roboto", 16, "bold"), text_color=self.ACCENT_RED).pack(pady=10)
+        # Cabeçalho Estilizado (Painel de Controle)
+        header_bio = ctk.CTkFrame(self.sidebar_biometria, fg_color="#1f2937", height=60, corner_radius=0)
+        header_bio.pack(fill="x")
+        header_bio.pack_propagate(False)
 
-        self.scroll_biometria = ctk.CTkScrollableFrame(self.sidebar_biometria, fg_color=self.BG_LIST)
-        self.scroll_biometria.pack(expand=True, fill="both", padx=5, pady=5)
+        lbl_painel = ctk.CTkLabel(header_bio, text="Painel de Controle", font=("Roboto", 15, "bold"), text_color="#14b8a6", anchor="w")
+        lbl_painel.pack(fill="x", padx=16, pady=(8, 0))
+        ctk.CTkLabel(header_bio, text="Monitoramento Inteligente", font=("Roboto", 10), text_color="#9ca3af", anchor="w").pack(fill="x", padx=16)
+
+        # Barra de Status dos Eventos
+        status_bar_bio = ctk.CTkFrame(self.sidebar_biometria, fg_color="#1a202c", height=35, corner_radius=0)
+        status_bar_bio.pack(fill="x")
+        status_bar_bio.pack_propagate(False)
+
+        ctk.CTkLabel(status_bar_bio, text="EVENTOS EM TEMPO REAL", font=("Roboto", 11, "bold"), text_color="#2dd4bf").pack(side="left", padx=16)
+        self.lbl_contador_bio = ctk.CTkLabel(status_bar_bio, text="0 total", font=("Roboto", 10), text_color="#9ca3af")
+        self.lbl_contador_bio.pack(side="right", padx=16)
+
+        self.scroll_biometria = ctk.CTkScrollableFrame(self.sidebar_biometria, fg_color="#0b0f19", corner_radius=0)
+        self.scroll_biometria.pack(expand=True, fill="both", padx=0, pady=0)
 
         self.criar_interface_grid()
 
@@ -916,6 +932,11 @@ class CentralMonitoramento(ctk.CTk):
     def atualizar_visibilidade_biometria(self):
         """Aplica a visibilidade dos componentes de biometria baseado em self.biometria_habilitada."""
         if self.biometria_habilitada:
+            if not BIO_LIBS_INSTALLED:
+                self.biometria_habilitada = False
+                self.abrir_modal_alerta("Erro", "O monitoramento biométrico requer as bibliotecas 'playwright' e 'beautifulsoup4'.")
+                return
+
             self.container_toggle_direita.grid(row=0, column=3, sticky="ns")
             if self.sidebar_biometria_visible:
                 self.sidebar_biometria.grid(row=0, column=4, sticky="nsew")
@@ -1119,9 +1140,8 @@ class CentralMonitoramento(ctk.CTk):
         self.sidebar_biometria.grid_forget()
         self.container_toggle_direita.grid_forget()
 
-        # Se biometria estiver desabilitada, o grid só tem 3 colunas efetivas no modo normal,
-        # mas na estrutura da janela sempre configuramos 5 colunas.
-        self.main_frame.grid_configure(column=0, columnspan=5)
+        # Ocupa as 5 colunas
+        self.main_frame.grid_configure(row=0, column=0, columnspan=5, sticky="nsew")
 
         self.grid_frame.pack_forget()
         self.grid_frame.pack(expand=True, fill="both", padx=0, pady=0)
@@ -3181,8 +3201,8 @@ class CentralMonitoramento(ctk.CTk):
                 with open(self.arquivo_config_bio, "r", encoding='utf-8') as f:
                     dados = json.load(f)
                     self.URL_LOGIN_BIO = dados.get("url", self.URL_LOGIN_BIO)
-                    self.USUARIO_BIO = dados.get("usuario", "")
-                    self.SENHA_BIO = dados.get("senha", "")
+                    self.USUARIO_BIO = dados.get("usuario", self.USUARIO_BIO)
+                    self.SENHA_BIO = dados.get("senha", self.SENHA_BIO)
             except: pass
         else:
             # Cria arquivo de exemplo se não existir
@@ -3339,12 +3359,17 @@ class CentralMonitoramento(ctk.CTk):
                     if (tds.length >= 8) {
                         const horario = tds[0].innerText ? tds[0].innerText.trim() : tds[0].textContent.trim();
                         if (/^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}$/.test(horario)) {
+                            const dispositivo = tds[2].innerText ? tds[2].innerText.trim() : tds[2].textContent.trim();
+                            const evento = tds[4].innerText ? tds[4].innerText.trim() : tds[4].textContent.trim();
+                            const pessoa = tds[6].innerText ? tds[6].innerText.trim() : tds[6].textContent.trim();
+                            const leitor = tds[7].innerText ? tds[7].innerText.trim() : tds[7].textContent.trim();
+
                             resultados.push({
                                 horario: horario,
-                                dispositivo: tds[2].innerText.trim(),
-                                evento: tds[4].innerText.trim(),
-                                pessoa: tds[6].innerText.trim(),
-                                leitor: tds[7].innerText.trim()
+                                dispositivo: dispositivo,
+                                evento: evento,
+                                pessoa: pessoa,
+                                leitor: leitor
                             });
                         }
                     }
@@ -3387,19 +3412,29 @@ class CentralMonitoramento(ctk.CTk):
             context = browser.new_context(no_viewport=True)
             page = context.new_page()
             try:
+                print(f"[*] Biometria: Acessando {self.URL_LOGIN_BIO}...")
                 page.goto(self.URL_LOGIN_BIO)
-                if self.USUARIO_BIO and self.SENHA_BIO:
+
+                # Tenta preencher login se os campos existirem
+                try:
+                    page.wait_for_selector("#username", timeout=5000)
                     page.fill("#username", self.USUARIO_BIO)
                     page.fill("#password", self.SENHA_BIO)
                     page.locator("input[type='submit'], button, a.login-btn").first.click()
+                    print("[+] Biometria: Login automático enviado.")
+                except:
+                    print("[!] Biometria: Campos de login não encontrados ou já logado.")
 
-                # Aguarda redirecionamento ou interação do usuário
-                # Timeout maior para permitir que o usuário faça login manualmente se necessário
+                # Aguarda redirecionamento
                 try:
-                    page.wait_for_url(re.compile(r"(main|dashboard|realTimeMonitor)\.do"), timeout=15000)
-                except: pass
-                time.sleep(2)
-            except:
+                    page.wait_for_url(re.compile(r"(main|dashboard|realTimeMonitor)\.do"), timeout=20000)
+                    print("[+] Biometria: Redirecionamento detectado.")
+                except:
+                    print("[!] Biometria: Aguardando navegação manual ou timeout.")
+
+                time.sleep(5)
+            except Exception as e:
+                print(f"[-] Biometria: Erro na inicialização do navegador: {e}")
                 browser.close()
                 return
 
@@ -3423,18 +3458,24 @@ class CentralMonitoramento(ctk.CTk):
                                 self.ultimos_eventos_processados.add(chave)
 
                         # Popups
-                        for el in fonte.locator("div[style*='text-align: center']").all():
-                            dados = self.extrair_dados_notificacao_biometria(el.inner_html())
-                            if dados:
-                                id_u, nome_u, ev, disp, de_raw, b64, leitor_p = dados
-                                de = self.normalizar_data_bio(de_raw)
-                                ev = ev.replace("Verificação de abertura normal", "").strip()
-                                if disp == "Geral": disp = ""
-                                chave = f"{id_u}_{de}"
-                                if b64 and chave not in self.eventos_com_foto_processados:
-                                    self.registrar_evento_biometria(id_u, nome_u, ev, disp, leitor_p, de, b64)
-                                    self.ultimos_eventos_processados.add(chave)
-                                    self.eventos_com_foto_processados.add(chave)
+                        try:
+                            elementos_alvo = fonte.locator("div[style*='text-align: center']").all()
+                            for el in elementos_alvo:
+                                html_interno = el.inner_html()
+                                if "<p>" in html_interno and "</p>" in html_interno:
+                                    dados = self.extrair_dados_notificacao_biometria(html_interno)
+                                    if dados:
+                                        id_u, nome_u, ev, disp, de_raw, b64, leitor_p = dados
+                                        de = self.normalizar_data_bio(de_raw)
+                                        ev = ev.replace("Verificação de abertura normal", "").strip()
+                                        if disp == "Geral": disp = ""
+                                        chave = f"{id_u}_{de}"
+
+                                        if b64 and chave not in self.eventos_com_foto_processados:
+                                            self.registrar_evento_biometria(id_u, nome_u, ev, disp, leitor_p, de, b64)
+                                            self.ultimos_eventos_processados.add(chave)
+                                            self.eventos_com_foto_processados.add(chave)
+                        except: pass
 
                     if len(self.ultimos_eventos_processados) > 1000:
                         self.ultimos_eventos_processados.clear()
@@ -3501,68 +3542,84 @@ class CentralMonitoramento(ctk.CTk):
 
     def adicionar_card_biometria(self, id_usuario, nome, evento, dispositivo, leitor, data_evento, base64_foto):
         # Cria card principal
-        card = ctk.CTkFrame(self.scroll_biometria, fg_color=self.BG_SIDEBAR, corner_radius=6, border_width=1, border_color=self.GRAY_DARK)
+        card = ctk.CTkFrame(self.scroll_biometria, fg_color="#111827", corner_radius=6, border_width=1, border_color="#374151")
         # Insere no topo da lista
         card.pack(fill="x", pady=5, padx=5, before=self.scroll_biometria.winfo_children()[0] if self.scroll_biometria.winfo_children() else None)
 
-        # Barra lateral de status (teal se tiver foto, laranja se não)
+        # Barra lateral de status
         status_color = "#14b8a6" if base64_foto else "#f59e0b"
         status_bar = ctk.CTkFrame(card, width=4, fg_color=status_color, corner_radius=0)
         status_bar.pack(side="left", fill="y")
 
         # Container interno
         content = ctk.CTkFrame(card, fg_color="transparent")
-        content.pack(side="left", fill="both", expand=True, padx=10, pady=10)
+        content.pack(side="left", fill="both", expand=True, padx=8, pady=8)
 
-        # Foto e Informações Principais
-        top_row = ctk.CTkFrame(content, fg_color="transparent")
-        top_row.pack(fill="x")
+        # Layout: [FOTO] [CONTEUDO]
+        main_row = ctk.CTkFrame(content, fg_color="transparent")
+        main_row.pack(fill="x")
 
-        # Foto
+        # Foto (Esquerda)
         if base64_foto:
             try:
                 if "," in base64_foto: base64_foto = base64_foto.split(",")[1]
                 img_data = base64.b64decode(base64_foto)
                 from io import BytesIO
                 img_pil = Image.open(BytesIO(img_data))
-                img_ctk = ctk.CTkImage(img_pil, size=(50, 50))
-                lbl_foto = ctk.CTkLabel(top_row, image=img_ctk, text="", width=50, height=50)
+                img_ctk = ctk.CTkImage(img_pil, size=(60, 60))
+                lbl_foto = ctk.CTkLabel(main_row, image=img_ctk, text="", width=60, height=60)
                 lbl_foto.image = img_ctk
-                lbl_foto.pack(side="left", padx=(0, 10))
+                lbl_foto.pack(side="left", padx=(0, 10), anchor="n")
             except:
-                ctk.CTkLabel(top_row, text="👤", font=("Roboto", 24), width=50, height=50, fg_color=self.BG_LIST).pack(side="left", padx=(0, 10))
+                ctk.CTkLabel(main_row, text="👤", font=("Roboto", 30), width=60, height=60, fg_color="#1f2937").pack(side="left", padx=(0, 10), anchor="n")
         else:
-            ctk.CTkLabel(top_row, text="👤", font=("Roboto", 24), width=50, height=50, fg_color=self.BG_LIST).pack(side="left", padx=(0, 10))
+            ctk.CTkLabel(main_row, text="👤", font=("Roboto", 30), width=60, height=60, fg_color="#1f2937").pack(side="left", padx=(0, 10), anchor="n")
 
-        # Detalhes (ID, Nome, Hora)
-        info_col = ctk.CTkFrame(top_row, fg_color="transparent")
+        # Conteúdo (Direita)
+        info_col = ctk.CTkFrame(main_row, fg_color="transparent")
         info_col.pack(side="left", fill="both", expand=True)
 
+        # Linha 1: ID e Hora
         header = ctk.CTkFrame(info_col, fg_color="transparent")
         header.pack(fill="x")
 
-        ctk.CTkLabel(header, text=f"ID: {id_usuario}", font=("Roboto", 10, "bold"), text_color="#14b8a6", fg_color="transparent").pack(side="left")
-        ctk.CTkLabel(header, text=f"🕒 {data_evento.split(' ')[1] if ' ' in data_evento else data_evento}", font=("Roboto", 10, "bold"), text_color="#f59e0b", fg_color="transparent").pack(side="right")
+        # ID com fundo teal (Badge)
+        id_badge = ctk.CTkFrame(header, fg_color="rgba(20, 184, 166, 0.15)", corner_radius=3)
+        id_badge.pack(side="left")
+        ctk.CTkLabel(id_badge, text=f"ID: {id_usuario}", font=("Roboto", 10, "bold"), text_color="#2dd4bf", fg_color="transparent", padx=4, pady=1).pack()
 
-        ctk.CTkLabel(info_col, text=nome, font=("Roboto", 12, "bold"), text_color=self.TEXT_P, anchor="w", fg_color="transparent").pack(fill="x")
+        # Hora em laranja
+        hora_txt = data_evento.split(' ')[1] if ' ' in data_evento else data_evento
+        ctk.CTkLabel(header, text=f"🕒 {hora_txt}", font=("Roboto", 10, "bold"), text_color="#f59e0b", fg_color="transparent").pack(side="right")
 
-        # Rodapé do card (Dispositivo e Evento)
-        footer = ctk.CTkFrame(content, fg_color="transparent")
-        footer.pack(fill="x", pady=(5, 0))
+        # Linha 2: Nome do Usuário
+        ctk.CTkLabel(info_col, text=nome.upper(), font=("Roboto", 12, "bold"), text_color="white", anchor="w", fg_color="transparent", justify="left").pack(fill="x", pady=(2, 0))
 
+        # Linha 3: Leitor (Pin icon)
         if leitor:
-            ctk.CTkLabel(footer, text=f"📍 {leitor}", font=("Roboto", 10, "bold"), text_color="#14b8a6", anchor="w", fg_color="transparent").pack(fill="x")
+            leitor_row = ctk.CTkFrame(info_col, fg_color="transparent")
+            leitor_row.pack(fill="x")
+            ctk.CTkLabel(leitor_row, text=f"📍 {leitor}", font=("Roboto", 9, "bold"), text_color="#FF4081", anchor="w", fg_color="transparent").pack(side="left")
 
-        if evento:
-            ctk.CTkLabel(footer, text=evento, font=("Roboto", 10), text_color="#facc15", anchor="w", fg_color="transparent").pack(fill="x")
-
+        # Linha 4: Dispositivo (PC icon)
         if dispositivo:
-            ctk.CTkLabel(footer, text=f"🖥️ {dispositivo}", font=("Roboto", 10), text_color="#cbd5e1", anchor="e", fg_color="transparent").pack(fill="x")
+            disp_row = ctk.CTkFrame(info_col, fg_color="transparent")
+            disp_row.pack(fill="x")
+            ctk.CTkLabel(disp_row, text=f"🖥️ {dispositivo}", font=("Roboto", 9), text_color="#42A5F5", anchor="w", fg_color="transparent").pack(side="left")
 
-        # Limita quantidade de cards
+        # Linha 5: Evento (Opcional, em amarelo se existir)
+        if evento and evento != nome: # Evita redundância
+            ctk.CTkLabel(info_col, text=evento, font=("Roboto", 9, "italic"), text_color="#facc15", anchor="w", fg_color="transparent").pack(fill="x")
+
+        # Limita quantidade de cards e atualiza contador
         filhos = self.scroll_biometria.winfo_children()
-        if len(filhos) > 50:
+        total = len(filhos)
+        if total > 50:
             filhos[-1].destroy()
+            total = 50
+
+        if hasattr(self, 'lbl_contador_bio'):
+            self.lbl_contador_bio.configure(text=f"{total} total")
 
 if __name__ == "__main__":
     dados_sistema = carregar_dados_sistema()
