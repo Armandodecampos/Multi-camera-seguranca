@@ -11,19 +11,7 @@ import requests
 from requests.auth import HTTPDigestAuth
 import subprocess
 import platform
-import re
-import csv
-import base64
-from datetime import datetime
-try:
-    from bs4 import BeautifulSoup
-    from playwright.sync_api import sync_playwright
-    BIO_LIBS_INSTALLED = True
-except ImportError:
-    BIO_LIBS_INSTALLED = False
-
 from tkinter import filedialog
-
 # Configuração de baixa latência para OpenCV/FFMPEG
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp;stimeout;3000000;buffer_size;2048000;analyzeduration;50000;probesize;50000;fflags;discardcorrupt;max_delay;500000;reorder_queue_size;16;rtsp_flags;prefer_tcp;reconnect;1;reconnect_streamed;1;reconnect_at_eof;1;allowed_media_types;video"
 cv2.setNumThreads(1)
@@ -452,11 +440,6 @@ class CentralMonitoramento(ctk.CTk):
     TEXT_S = "#9E9E9E"
     GRAY_DARK = "#424242"
 
-    # Configurações Biometria (Padrões)
-    URL_LOGIN_BIO = "http://192.168.7.9:8098/bioLogin.do"
-    USUARIO_BIO = ""
-    SENHA_BIO = ""
-
     def configurar_variaveis_grid(self, num_slots):
         """Define as dimensões do grid com base na quantidade de slots."""
         self.num_slots = num_slots
@@ -520,20 +503,6 @@ class CentralMonitoramento(ctk.CTk):
         self.diretorio_prints = os.path.join(user_dir, "cameras_prints_abi")
         os.makedirs(self.diretorio_prints, exist_ok=True)
 
-        # Diretórios Biometria (Relativos para compatibilidade total com o script standalone)
-        self.diretorio_biometria = "relatorio_acessos"
-        self.diretorio_fotos_bio = os.path.join(self.diretorio_biometria, "fotos")
-        self.arquivo_csv_bio = os.path.join(self.diretorio_biometria, "historico_acessos.csv")
-        self.arquivo_html_bio = os.path.join(self.diretorio_biometria, "relatorio_visual.html")
-        self.arquivo_config_bio = os.path.join(user_dir, "config_biometria_abi.json")
-        os.makedirs(self.diretorio_fotos_bio, exist_ok=True)
-
-        self.carregar_config_biometria()
-
-        self.ultimos_eventos_processados = set()
-        self.eventos_com_foto_processados = set()
-        self.data_sistema_atual_bio = datetime.now().strftime("%Y-%m-%d")
-
         self.botoes_referencia = {}
         self.ip_selecionado = None
         self.predefinicao_widgets = {}
@@ -552,8 +521,6 @@ class CentralMonitoramento(ctk.CTk):
         self.ultima_predefinicao = None
         self.aba_ativa = "Câmeras"
         self.tamanho_preview = "Pequeno"
-        self.biometria_habilitada = False
-        self.bio_browser_solicitado = False
         self.iconic_state = False
         self.zoom_stop_timer = None
         self.ctrl_pressionado = False
@@ -650,14 +617,11 @@ class CentralMonitoramento(ctk.CTk):
 
         # Controle da Sidebar
         self.sidebar_visible = True
-        self.sidebar_biometria_visible = False # Começa fechada ou baseada na habilitação
 
         # --- LAYOUT ATUALIZADO ---
-        self.grid_columnconfigure(0, weight=0) # Sidebar fixa (Esquerda)
-        self.grid_columnconfigure(1, weight=0) # Botão toggle fixo (Esquerda)
+        self.grid_columnconfigure(0, weight=0) # Sidebar fixa
+        self.grid_columnconfigure(1, weight=0) # Botão toggle fixo
         self.grid_columnconfigure(2, weight=1) # Main expande
-        self.grid_columnconfigure(3, weight=0) # Botão toggle fixo (Direita)
-        self.grid_columnconfigure(4, weight=0) # Sidebar biometria (Direita)
         self.grid_rowconfigure(0, weight=1)
 
         # 1. Sidebar (Coluna 0)
@@ -753,56 +717,6 @@ class CentralMonitoramento(ctk.CTk):
         self.main_frame = ctk.CTkFrame(self, fg_color=self.BG_MAIN, corner_radius=0)
         self.main_frame.grid(row=0, column=2, sticky="nsew")
 
-        # 4. Container Toggle Biometria (Coluna 3)
-        self.container_toggle_direita = ctk.CTkFrame(self, fg_color=self.BG_PANEL, corner_radius=0)
-        # Não damos grid() aqui ainda, faremos em atualizar_visibilidade_biometria
-
-        self.lbl_eventos_vertical = ctk.CTkLabel(
-            self.container_toggle_direita,
-            text="E\nV\nE\nN\nT\nO\nS",
-            font=("Roboto", 11, "bold"),
-            text_color=self.TEXT_S
-        )
-        self.lbl_eventos_vertical.pack(side="right", padx=(0, 2))
-
-        self.btn_toggle_biometria = ctk.CTkButton(
-            self.container_toggle_direita,
-            text="▶",
-            width=40,
-            corner_radius=0,
-            font=("Roboto", 24, "bold"),
-            fg_color=self.BG_PANEL,
-            hover_color=self.ACCENT_WINE,
-            text_color=self.ACCENT_RED,
-            command=self.toggle_sidebar_biometria
-        )
-        self.btn_toggle_biometria.pack(side="left", fill="y")
-
-        # 5. Sidebar Biometria (Coluna 4)
-        self.sidebar_biometria = ctk.CTkFrame(self, width=350, corner_radius=0, fg_color=self.BG_SIDEBAR)
-        # Não damos grid() aqui ainda
-
-        # Cabeçalho Estilizado (Painel de Controle)
-        header_bio = ctk.CTkFrame(self.sidebar_biometria, fg_color="#1f2937", height=60, corner_radius=0)
-        header_bio.pack(fill="x")
-        header_bio.pack_propagate(False)
-
-        lbl_painel = ctk.CTkLabel(header_bio, text="Painel de Controle", font=("Roboto", 15, "bold"), text_color="#2dd4bf", anchor="w")
-        lbl_painel.pack(fill="x", padx=16, pady=(8, 0))
-        ctk.CTkLabel(header_bio, text="Monitoramento Inteligente", font=("Roboto", 10), text_color="#94a3b8", anchor="w").pack(fill="x", padx=16)
-
-        # Barra de Status dos Eventos
-        status_bar_bio = ctk.CTkFrame(self.sidebar_biometria, fg_color="#1a202c", height=35, corner_radius=0)
-        status_bar_bio.pack(fill="x")
-        status_bar_bio.pack_propagate(False)
-
-        ctk.CTkLabel(status_bar_bio, text="EVENTOS EM TEMPO REAL", font=("Roboto", 11, "bold"), text_color="#2dd4bf").pack(side="left", padx=16)
-        self.lbl_contador_bio = ctk.CTkLabel(status_bar_bio, text="0 total", font=("Roboto", 10), text_color="#9ca3af")
-        self.lbl_contador_bio.pack(side="right", padx=16)
-
-        self.scroll_biometria = ctk.CTkScrollableFrame(self.sidebar_biometria, fg_color="#0b0f19", corner_radius=0)
-        self.scroll_biometria.pack(expand=True, fill="both", padx=0, pady=0)
-
         self.criar_interface_grid()
 
         print("SISTEMA: Atualizando listas da UI...")
@@ -842,9 +756,6 @@ class CentralMonitoramento(ctk.CTk):
         self.last_button_state = None
         self._window_scaling = self._get_window_scaling()
         self._loop_counter = 0
-
-        self.atualizar_visibilidade_biometria()
-
         self.loop_exibicao()
 
     def _iniciar_sistema_conexoes(self):
@@ -918,40 +829,6 @@ class CentralMonitoramento(ctk.CTk):
             self.sidebar.grid(row=0, column=0, sticky="nsew")
             self.btn_toggle_sidebar.configure(text="◀")
             self.sidebar_visible = True
-
-    def toggle_sidebar_biometria(self):
-        if self.sidebar_biometria_visible:
-            self.sidebar_biometria.grid_forget()
-            self.btn_toggle_biometria.configure(text="◀")
-            self.sidebar_biometria_visible = False
-        else:
-            self.sidebar_biometria.grid(row=0, column=4, sticky="nsew")
-            self.btn_toggle_biometria.configure(text="▶")
-            self.sidebar_biometria_visible = True
-
-    def atualizar_visibilidade_biometria(self):
-        """Aplica a visibilidade dos componentes de biometria baseado em self.biometria_habilitada."""
-        if self.biometria_habilitada:
-            if not BIO_LIBS_INSTALLED:
-                self.biometria_habilitada = False
-                self.abrir_modal_alerta("Erro", "O monitoramento biométrico requer as bibliotecas 'playwright' e 'beautifulsoup4'.")
-                return
-
-            self.container_toggle_direita.grid(row=0, column=3, sticky="ns")
-            if self.sidebar_biometria_visible:
-                self.sidebar_biometria.grid(row=0, column=4, sticky="nsew")
-                self.btn_toggle_biometria.configure(text="▶")
-            else:
-                self.sidebar_biometria.grid_forget()
-                self.btn_toggle_biometria.configure(text="◀")
-
-            # Se habilitar pela primeira vez e não estiver rodando, inicia
-            if not hasattr(self, 'bio_thread_rodando') or not self.bio_thread_rodando:
-                self.bio_thread_rodando = True
-                threading.Thread(target=self.monitorar_biometria_loop, daemon=True).start()
-        else:
-            self.container_toggle_direita.grid_forget()
-            self.sidebar_biometria.grid_forget()
 
     # --- LÓGICA PTZ ---
     def ao_scroll_mouse(self, event):
@@ -1137,11 +1014,8 @@ class CentralMonitoramento(ctk.CTk):
         
         self.sidebar.grid_forget()
         self.container_toggle.grid_forget()
-        self.sidebar_biometria.grid_forget()
-        self.container_toggle_direita.grid_forget()
 
-        # Ocupa as 5 colunas
-        self.main_frame.grid_configure(row=0, column=0, columnspan=5, sticky="nsew")
+        self.main_frame.grid_configure(column=0, columnspan=3)
 
         self.grid_frame.pack_forget()
         self.grid_frame.pack(expand=True, fill="both", padx=0, pady=0)
@@ -1170,15 +1044,6 @@ class CentralMonitoramento(ctk.CTk):
             self.sidebar.grid(row=0, column=0, sticky="nsew")
         
         self.container_toggle.grid(row=0, column=1, sticky="ns")
-
-        if self.biometria_habilitada:
-            self.container_toggle_direita.grid(row=0, column=3, sticky="ns")
-            if self.sidebar_biometria_visible:
-                self.sidebar_biometria.grid(row=0, column=4, sticky="nsew")
-
-        # Se biometria desabilitada, main_frame poderia expandir?
-        # A regra ABI pede container recolhível, se desativado nas configs ele some.
-        # Vamos manter o main_frame na coluna 2.
         self.main_frame.grid_configure(column=2, columnspan=1)
         
         self.grid_frame.pack_forget()
@@ -1207,9 +1072,9 @@ class CentralMonitoramento(ctk.CTk):
                     geom = dados.get("geometry")
                     if geom: self.geometry(geom)
                     self.aba_ativa = dados.get("active_tab", "Câmeras")
+                    # self.ultima_predefinicao é agora definida pela regra de "primeira predefinição" no __init__
                     self.slot_selecionado = dados.get("slot_selecionado", 0)
                     self.tamanho_preview = dados.get("tamanho_preview", "Pequeno")
-                    self.biometria_habilitada = dados.get("biometria_habilitada", False)
                     if self.tamanho_preview == "Médio":
                         self.tamanho_preview = "Grande"
             except Exception as e: print(f"Erro ao carregar janela: {e}")
@@ -1225,22 +1090,9 @@ class CentralMonitoramento(ctk.CTk):
             # Re-grid Container Toggle
             self.container_toggle.grid(row=0, column=1, sticky="ns")
 
-            # Re-grid Sidebar Biometria
-            if getattr(self, 'sidebar_biometria_visible', True):
-                self.sidebar_biometria.grid(row=0, column=4, sticky="nsew")
-
-            # Re-grid Biometria Components
-            if getattr(self, 'biometria_habilitada', False):
-                self.container_toggle_direita.grid(row=0, column=3, sticky="ns")
-                if getattr(self, 'sidebar_biometria_visible', True):
-                    self.sidebar_biometria.grid(row=0, column=4, sticky="nsew")
-            else:
-                self.container_toggle_direita.grid_forget()
-                self.sidebar_biometria.grid_forget()
-
             # Re-grid Main Frame
             if self.em_tela_cheia:
-                self.main_frame.grid_configure(row=0, column=0, columnspan=5, sticky="nsew")
+                self.main_frame.grid_configure(row=0, column=0, columnspan=3, sticky="nsew")
             else:
                 self.main_frame.grid_configure(row=0, column=2, sticky="nsew")
 
@@ -1289,8 +1141,7 @@ class CentralMonitoramento(ctk.CTk):
                     "last_predefinicao": self.ultima_predefinicao,
                     "slot_selecionado": self.slot_selecionado,
                     "tamanho_preview": self.tamanho_preview,
-                    "num_slots": self.num_slots,
-                    "biometria_habilitada": self.biometria_habilitada
+                    "num_slots": self.num_slots
                 }
                 with open(self.arquivo_janela, "w") as f: json.dump(dados, f)
         except Exception as e: print(f"Erro ao salvar janela: {e}")
@@ -1752,7 +1603,7 @@ class CentralMonitoramento(ctk.CTk):
     def abrir_janela_configuracoes(self):
         modal = ctk.CTkToplevel(self)
         modal.title("Configurações")
-        modal.geometry("400x600")
+        modal.geometry("400x420")
         modal.resizable(False, False)
         modal.attributes("-topmost", True)
 
@@ -1797,29 +1648,6 @@ class CentralMonitoramento(ctk.CTk):
                                            unselected_hover_color=self.ACCENT_WINE)
         seg_grid.set(str(self.num_slots))
         seg_grid.pack(pady=10, padx=20, fill="x")
-
-        # Configurações de Biometria
-        ctk.CTkLabel(modal, text="MONITORAMENTO BIOMÉTRICO", font=("Roboto", 16, "bold"), text_color=self.ACCENT_RED).pack(pady=(30, 10))
-
-        def toggle_bio(valor):
-            self.biometria_habilitada = valor
-            self.atualizar_visibilidade_biometria()
-
-        if BIO_LIBS_INSTALLED:
-            switch_bio = ctk.CTkSwitch(modal, text="Habilitar Monitoramento em Tempo Real",
-                                        command=lambda: toggle_bio(switch_bio.get()),
-                                        progress_color=self.ACCENT_RED)
-            if self.biometria_habilitada: switch_bio.select()
-            switch_bio.pack(pady=10, padx=20, anchor="w")
-
-            btn_open_browser = ctk.CTkButton(modal, text="🌐 Abrir Navegador de Monitoramento",
-                                              fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
-                                              height=40,
-                                              command=lambda: [modal.destroy(), self.abrir_navegador_biometria()])
-            btn_open_browser.pack(pady=20, padx=40, fill="x")
-        else:
-            ctk.CTkLabel(modal, text="Recurso indisponível: 'playwright' e 'beautifulsoup4' não encontrados.",
-                         text_color=self.ACCENT_RED, font=("Roboto", 12)).pack(pady=10)
 
     def mudar_quantidade_slots(self, nova_qtd):
         """Altera a quantidade de slots do grid e reconstrói a interface."""
@@ -3195,23 +3023,6 @@ class CentralMonitoramento(ctk.CTk):
             print(f"Erro ao abrir pasta de downloads: {e}")
 
     # --- MÉTODOS DE SCREENSHOT ---
-    def carregar_config_biometria(self):
-        if os.path.exists(self.arquivo_config_bio):
-            try:
-                with open(self.arquivo_config_bio, "r", encoding='utf-8') as f:
-                    dados = json.load(f)
-                    self.URL_LOGIN_BIO = dados.get("url", self.URL_LOGIN_BIO)
-                    self.USUARIO_BIO = dados.get("usuario", self.USUARIO_BIO)
-                    self.SENHA_BIO = dados.get("senha", self.SENHA_BIO)
-            except: pass
-        else:
-            # Cria arquivo de exemplo se não existir
-            try:
-                exemplo = {"url": self.URL_LOGIN_BIO, "usuario": "SEU_USUARIO", "senha": "SUA_SENHA"}
-                with open(self.arquivo_config_bio, "w", encoding='utf-8') as f:
-                    json.dump(exemplo, f, indent=4)
-            except: pass
-
     def capturar_imagem(self):
         if not self.ip_selecionado:
             self.abrir_modal_alerta("Aviso", "Nenhuma câmera selecionada.")
@@ -3247,446 +3058,6 @@ class CentralMonitoramento(ctk.CTk):
                 self.abrir_modal_alerta("Erro", f"Falha ao salvar imagem: {e}")
         else:
             self.abrir_modal_alerta("Erro", "Não foi possível obter um frame válido da câmera.")
-
-    # --- MÉTODOS BIOMETRIA ---
-    def normalizar_data_bio(self, data_str):
-        if not data_str:
-            return f"{self.data_sistema_atual_bio} {datetime.now().strftime('%H:%M:%S')}"
-        if re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$", data_str):
-            self.data_sistema_atual_bio = data_str.split(' ')[0]
-            return data_str
-        if re.match(r"^\d{2}:\d{2}:\d{2}$", data_str):
-            return f"{self.data_sistema_atual_bio} {data_str}"
-        return data_str
-
-    def salvar_foto_biometria(self, base64_data, id_usuario, data_evento):
-        if not base64_data: return ""
-        if "," in base64_data: base64_data = base64_data.split(",")[1]
-        try:
-            data_safe = re.sub(r'[^0-9]', '_', data_evento)
-            nome_arquivo = f"{id_usuario}_{data_safe}.jpg"
-            caminho_completo = os.path.join(self.diretorio_fotos_bio, nome_arquivo)
-            with open(caminho_completo, "wb") as f:
-                f.write(base64.b64decode(base64_data))
-            return caminho_completo
-        except Exception as e:
-            print(f"[-] Erro ao salvar foto biometria: {e}")
-            return ""
-
-    def registrar_evento_biometria(self, id_usuario, nome, evento, dispositivo, leitor, data_evento, base64_foto):
-        caminho_foto_local = ""
-        if base64_foto:
-            caminho_foto_local = self.salvar_foto_biometria(base64_foto, id_usuario, data_evento)
-
-        data_registro = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        registros_existentes = []
-        atualizado = False
-
-        if os.path.exists(self.arquivo_csv_bio):
-            with open(self.arquivo_csv_bio, mode='r', encoding='utf-8') as f:
-                reader = csv.reader(f)
-                cabecalho = next(reader, None)
-                # Verifica se o cabeçalho já tem a coluna 'Leitor' (migração automática se necessário)
-                tem_coluna_leitor = "Leitor" in cabecalho if cabecalho else False
-
-                for row in reader:
-                    if not tem_coluna_leitor and len(row) == 7:
-                        row.insert(5, "") # Insere vazio na posição do Leitor
-
-                    if len(row) >= 8:
-                        if row[1] == id_usuario and row[6] == data_evento:
-                            if not row[7] and caminho_foto_local:
-                                row[7] = caminho_foto_local
-                            if not row[5] and leitor:
-                                row[5] = leitor
-                            if (not row[4] or row[4] == "Geral") and dispositivo and dispositivo != "Geral":
-                                row[4] = dispositivo
-                            atualizado = True
-                        registros_existentes.append(row)
-
-        if not atualizado:
-            registros_existentes.append([data_registro, id_usuario, nome, evento, dispositivo, leitor, data_evento, caminho_foto_local])
-
-        with open(self.arquivo_csv_bio, mode='w', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            writer.writerow(["Data_Registro", "ID", "Nome", "Evento", "Dispositivo", "Leitor", "Data_Evento", "Caminho_Foto"])
-            writer.writerows(registros_existentes)
-
-        print(f"[+] Biometria: Registro Sincro {id_usuario} - {nome} | Leitor: {leitor} | Evento: {evento} | Data: {data_evento}")
-
-        # Atualiza Relatório HTML em disco
-        self.atualizar_relatorio_html_bio()
-
-        # Agenda atualização na UI
-        self.after(0, lambda: self.adicionar_card_biometria(id_usuario, nome, evento, dispositivo, leitor, data_evento, base64_foto))
-
-
-    def extrair_dados_notificacao_biometria(self, html_interno):
-        soup = BeautifulSoup(html_interno, 'html.parser')
-        img_tag = soup.find('img')
-        base64_foto = ""
-        if img_tag and img_tag.get('src') and "base64," in img_tag.get('src'):
-            base64_foto = img_tag.get('src')
-
-        p_tags = soup.find_all('p')
-        if len(p_tags) >= 3:
-            identificacao = p_tags[0].get_text(strip=True)
-            evento = p_tags[1].get_text(strip=True)
-            data_evento = p_tags[2].get_text(strip=True)
-            match = re.match(r"(\d+)\((.+)\)", identificacao)
-            if match:
-                id_usuario = match.group(1)
-                nome_usuario = match.group(2)
-            else:
-                id_usuario = "Desconhecido"
-                nome_usuario = identificacao
-
-            dispositivo = p_tags[3].get_text(strip=True) if len(p_tags) >= 4 else ""
-            leitor = p_tags[4].get_text(strip=True) if len(p_tags) >= 5 else ""
-            return id_usuario, nome_usuario, evento, dispositivo, data_evento, base64_foto, leitor
-        return None
-
-    def extrair_linhas_tabela_bio(self, frame):
-        """Varre e extrai os registros em tempo real diretamente da tabela de monitoramento visível no frame."""
-        try:
-            # Script JS idêntico ao standalone que comprovadamente funciona
-            js_tabela = """
-            () => {
-                const resultados = [];
-                const trs = document.querySelectorAll('tr');
-
-                for (const tr of trs) {
-                    const tds = tr.querySelectorAll('td');
-                    if (tds.length >= 8) {
-                        const horario = tds[0].innerText ? tds[0].innerText.trim() : tds[0].textContent.trim();
-                        // Garante que o primeiro campo é uma data válida (Formato YYYY-MM-DD HH:MM:SS)
-                        if (/^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}$/.test(horario)) {
-                            const dispositivo = tds[2].innerText ? tds[2].innerText.trim() : tds[2].textContent.trim();
-                            const evento = tds[4].innerText ? tds[4].innerText.trim() : tds[4].textContent.trim();
-                            const pessoa = tds[6].innerText ? tds[6].innerText.trim() : tds[6].textContent.trim();
-                            const leitor = tds[7].innerText ? tds[7].innerText.trim() : tds[7].textContent.trim();
-
-                            resultados.push({
-                                horario: horario,
-                                dispositivo: dispositivo,
-                                evento: evento,
-                                pessoa: pessoa,
-                                leitor: leitor
-                            });
-                        }
-                    }
-                }
-                return resultados;
-            }
-            """
-            return frame.evaluate(js_tabela)
-        except Exception:
-            return []
-
-    def monitorar_biometria_loop(self):
-        if not BIO_LIBS_INSTALLED:
-            print("[-] Biometria: Bibliotecas 'playwright' ou 'beautifulsoup4' não instaladas.")
-            self.bio_thread_rodando = False
-            return
-
-        self.bio_browser_aberto = False
-        while self.biometria_habilitada:
-            try:
-                self._executar_loop_scraping()
-            except Exception as e:
-                print(f"[!] Biometria: Aviso no loop: {e}")
-                time.sleep(5)
-        self.bio_thread_rodando = False
-
-    def abrir_navegador_biometria(self):
-        """Sinaliza para o loop de monitoramento abrir o navegador em modo visível."""
-        self.bio_browser_solicitado = True
-        # Se biometria não estiver habilitada, habilita
-        if not self.biometria_habilitada:
-            self.biometria_habilitada = True
-            self.atualizar_visibilidade_biometria()
-
-    def _executar_loop_scraping(self):
-        with sync_playwright() as p:
-            # Headless=False por padrão como no standalone para garantir popups e JS
-            headless = not getattr(self, 'bio_browser_solicitado', False)
-            browser = None
-
-            # Detecta resolução para argumentos exatos
-            try:
-                largura = self.winfo_screenwidth()
-                altura = self.winfo_screenheight()
-            except:
-                largura, altura = 1920, 1080
-
-            argumentos = [
-                f"--window-size={largura},{altura}",
-                "--window-position=0,0",
-                "--start-maximized"
-            ]
-
-            print(f"[*] Biometria: Iniciando navegador (Headless={headless})...")
-            for channel in ["chromium", "chrome", "msedge"]:
-                try:
-                    if channel == "chromium":
-                        browser = p.chromium.launch(headless=headless, args=argumentos)
-                    else:
-                        browser = p.chromium.launch(headless=headless, channel=channel, args=argumentos)
-                    print(f"[+] Biometria: Navegador {channel} iniciado.")
-                    break
-                except: continue
-
-            if not browser:
-                print("[-] Biometria: Falha ao iniciar qualquer navegador compatível.")
-                return
-
-            self.bio_browser_solicitado = False
-            context = browser.new_context(no_viewport=True)
-            page = context.new_page()
-
-            try:
-                print(f"[*] Biometria: Acessando {self.URL_LOGIN_BIO}...")
-                page.goto(self.URL_LOGIN_BIO)
-
-                # Login sequence idêntica ao standalone que funciona
-                page.wait_for_selector("#username", timeout=15000)
-                page.wait_for_selector("#password", timeout=15000)
-
-                print("[*] Biometria: Efetuando o login automático...")
-                page.fill("#username", self.USUARIO_BIO)
-                page.fill("#password", self.SENHA_BIO)
-                page.wait_for_timeout(500)
-
-                btn_login = page.locator("input[type='submit'], button, a.login-btn")
-                btn_login.first.click()
-
-                print("[*] Biometria: Aguardando redirecionamento...")
-                # Espera por qualquer URL que contenha main.do ou dashboard.do
-                page.wait_for_url(re.compile(r"(main|dashboard)\.do"), timeout=30000)
-                print("[+] Biometria: Login efetuado com sucesso!")
-
-                page.wait_for_timeout(5000)
-            except Exception as e:
-                print(f"[-] Biometria: Erro na inicialização ou login automático: {e}")
-                # Se não for headless, não fecha para o usuário poder logar manualmente
-                if headless:
-                    browser.close()
-                    return
-
-            print("[+] Biometria: Monitoramento ativo e responsivo.")
-            while self.biometria_habilitada and not getattr(self, 'bio_browser_solicitado', False):
-                try:
-                    fontes = [page] + page.frames
-                    for fonte in fontes:
-                        try:
-                            f_url = fonte.url
-                            if "192.168.7.9" not in f_url and "about:blank" not in f_url:
-                                continue
-
-                            # Tabela (Origem 1)
-                            linhas = self.extrair_linhas_tabela_bio(fonte)
-                            if linhas:
-                                for linha in linhas:
-                                    match = re.match(r"(\d+)\((.+)\)", linha["pessoa"])
-                                    id_u = match.group(1) if match else "Desconhecido"
-                                    nome_u = match.group(2) if match else linha["pessoa"]
-                                    evento = linha["evento"].replace("Verificação de abertura normal", "").strip()
-                                    disp = "" if linha["dispositivo"] == "Geral" else linha["dispositivo"]
-                                    data_e = self.normalizar_data_bio(linha["horario"])
-                                    chave = f"{id_u}_{data_e}"
-
-                                    if chave not in self.ultimos_eventos_processados:
-                                        self.registrar_evento_biometria(id_u, nome_u, evento, disp, linha["leitor"], data_e, "")
-                                        self.ultimos_eventos_processados.add(chave)
-
-                            # Popups (Origem 2 - Fotos)
-                            elementos_alvo = fonte.locator("div[style*='text-align: center']").all()
-                            for el in elementos_alvo:
-                                html_interno = el.inner_html()
-                                if "<p>" in html_interno and "</p>" in html_interno:
-                                    dados = self.extrair_dados_notificacao_biometria(html_interno)
-                                    if dados:
-                                        id_u, nome_u, ev, disp, de_raw, b64, leitor_p = dados
-                                        de = self.normalizar_data_bio(de_raw)
-                                        ev = ev.replace("Verificação de abertura normal", "").strip()
-                                        if disp == "Geral": disp = ""
-                                        chave = f"{id_u}_{de}"
-
-                                        if b64 and chave not in self.eventos_com_foto_processados:
-                                            self.registrar_evento_biometria(id_u, nome_u, ev, disp, leitor_p, de, b64)
-                                            self.ultimos_eventos_processados.add(chave)
-                                            self.eventos_com_foto_processados.add(chave)
-                        except: continue
-
-                    if len(self.ultimos_eventos_processados) > 1000:
-                        self.ultimos_eventos_processados.clear()
-                        self.eventos_com_foto_processados.clear()
-                    time.sleep(0.25)
-                except Exception as loop_err:
-                    print(f"[!] Biometria: Erro no loop de varredura: {loop_err}")
-                    time.sleep(2)
-
-            browser.close()
-
-    def atualizar_relatorio_html_bio(self):
-        registros = []
-        if os.path.exists(self.arquivo_csv_bio):
-            try:
-                with open(self.arquivo_csv_bio, mode='r', encoding='utf-8') as f:
-                    reader = csv.DictReader(f)
-                    registros = list(reader)
-                    registros.reverse()
-            except: pass
-
-        html_content = f"""<!DOCTYPE html>
-<html lang="pt-br">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Relatório de Monitoramento Biométrico</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body class="bg-gray-900 text-gray-100 font-sans min-h-screen">
-    <div class="container mx-auto px-4 py-8">
-        <header class="mb-8 border-b border-gray-800 pb-4">
-            <h1 class="text-3xl font-bold text-teal-400">Relatório de Monitoramento Biométrico</h1>
-            <p class="text-gray-400">Última atualização: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}</p>
-        </header>
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">"""
-
-        for r in registros:
-            caminho_foto = r.get('Caminho_Foto', '')
-            img_tag_src = f"fotos/{os.path.basename(caminho_foto)}" if caminho_foto else "https://via.placeholder.com/150"
-            html_content += f"""
-            <div class="bg-gray-800 rounded-xl overflow-hidden shadow-lg border border-gray-700 transition hover:scale-[1.02] duration-300">
-                <div class="p-4 flex justify-center bg-gray-950">
-                    <img class="h-44 object-contain rounded-lg border border-gray-700" src="{img_tag_src}" alt="Foto de {r['Nome']}" onerror="this.src='https://via.placeholder.com/150'">
-                </div>
-                <div class="p-4">
-                    <span class="inline-block px-2.5 py-1 text-xs font-semibold rounded-full bg-teal-900/50 text-teal-300 mb-2 border border-teal-800">
-                        ID: {r['ID']}
-                    </span>
-                    <h3 class="text-lg font-bold text-white truncate">{r['Nome']}</h3>
-                    <p class="text-sm text-yellow-400 font-medium mt-1">{r['Evento']}</p>
-                    <p class="text-xs text-teal-400 font-semibold mt-0.5">Leitor: {r['Leitor']}</p>
-                    <p class="text-sm text-gray-300 font-medium mt-0.5">🖥️ {r['Dispositivo']}</p>
-                    <div class="mt-4 pt-3 border-t border-gray-700 text-xs text-gray-400 flex flex-col gap-1">
-                        <div><strong class="text-gray-300">Evento em:</strong> {r['Data_Evento']}</div>
-                        <div><strong class="text-gray-300">Coletado em:</strong> {r['Data_Registro']}</div>
-                    </div>
-                </div>
-            </div>"""
-
-        html_content += """</div></div></body></html>"""
-        try:
-            with open(self.arquivo_html_bio, "w", encoding="utf-8") as f:
-                f.write(html_content)
-        except: pass
-
-    def adicionar_card_biometria(self, id_usuario, nome, evento, dispositivo, leitor, data_evento, base64_foto):
-        # Identificador único para de-duplicação na UI
-        chave_evento = f"{id_usuario}_{data_evento}"
-
-        # Verifica se já existe um card para este evento e o remove se for para atualizar com foto
-        card_existente = None
-        for child in self.scroll_biometria.winfo_children():
-            if hasattr(child, 'chave_evento') and child.chave_evento == chave_evento:
-                # Se já tem foto e estamos recebendo uma atualização sem foto, ignora
-                if hasattr(child, 'tem_foto') and child.tem_foto and not base64_foto:
-                    return
-                card_existente = child
-                break
-
-        # Cria card principal com cores do screenshot
-        card = ctk.CTkFrame(self.scroll_biometria, fg_color="#1a202c", corner_radius=6, border_width=1, border_color="#2d3748")
-        card.chave_evento = chave_evento
-        card.tem_foto = bool(base64_foto)
-
-        # Insere no topo ou na posição do antigo
-        if card_existente:
-            # Pega o índice do card antigo para manter a ordem se possível, ou apenas remove e põe no topo
-            card_existente.destroy()
-
-        card.pack(fill="x", pady=5, padx=8, before=self.scroll_biometria.winfo_children()[0] if self.scroll_biometria.winfo_children() else None)
-
-        # Barra lateral de status
-        status_color = "#14b8a6" if base64_foto else "#f59e0b"
-        status_bar = ctk.CTkFrame(card, width=4, fg_color=status_color, corner_radius=0)
-        status_bar.pack(side="left", fill="y")
-
-        # Container interno
-        content = ctk.CTkFrame(card, fg_color="transparent")
-        content.pack(side="left", fill="both", expand=True, padx=10, pady=10)
-
-        # Layout: [FOTO] [CONTEUDO]
-        main_row = ctk.CTkFrame(content, fg_color="transparent")
-        main_row.pack(fill="x")
-
-        # Foto (Esquerda)
-        lbl_foto = None
-        if base64_foto:
-            try:
-                if "," in base64_foto: base64_foto = base64_foto.split(",")[1]
-                img_data = base64.b64decode(base64_foto)
-                from io import BytesIO
-                img_pil = Image.open(BytesIO(img_data))
-                img_ctk = ctk.CTkImage(img_pil, size=(50, 50))
-                lbl_foto = ctk.CTkLabel(main_row, image=img_ctk, text="", width=50, height=50)
-                lbl_foto.image = img_ctk
-                lbl_foto.pack(side="left", padx=(0, 10), anchor="n")
-            except:
-                lbl_foto = ctk.CTkLabel(main_row, text="👤", font=("Roboto", 24), width=50, height=50, fg_color="#0b0f19")
-                lbl_foto.pack(side="left", padx=(0, 10), anchor="n")
-        else:
-            lbl_foto = ctk.CTkLabel(main_row, text="👤", font=("Roboto", 24), width=50, height=50, fg_color="#0b0f19")
-            lbl_foto.pack(side="left", padx=(0, 10), anchor="n")
-
-        # Conteúdo (Direita)
-        info_col = ctk.CTkFrame(main_row, fg_color="transparent")
-        info_col.pack(side="left", fill="both", expand=True)
-
-        # Linha 1: ID e Hora
-        header = ctk.CTkFrame(info_col, fg_color="transparent")
-        header.pack(fill="x")
-
-        # ID com fundo teal (Badge) - Estilo exato do screenshot
-        id_badge = ctk.CTkFrame(header, fg_color="rgba(20, 184, 166, 0.15)", corner_radius=3)
-        id_badge.pack(side="left")
-        ctk.CTkLabel(id_badge, text=f"ID: {id_usuario}", font=("Roboto", 10, "bold"), text_color="#2dd4bf", fg_color="transparent", padx=4, pady=1).pack()
-
-        # Hora em laranja
-        hora_txt = data_evento.split(' ')[1] if ' ' in data_evento else data_evento
-        ctk.CTkLabel(header, text=f"🕒 {hora_txt}", font=("Roboto", 10, "bold"), text_color="#f59e0b", fg_color="transparent").pack(side="right")
-
-        # Linha 2: Nome do Usuário (PROEMINENTE)
-        ctk.CTkLabel(info_col, text=nome.upper(), font=("Roboto", 12, "bold"), text_color="white", anchor="w", fg_color="transparent", justify="left").pack(fill="x", pady=(2, 0))
-
-        # Linha 3: Leitor (Pin icon)
-        if leitor:
-            leitor_row = ctk.CTkFrame(info_col, fg_color="transparent")
-            leitor_row.pack(fill="x")
-            ctk.CTkLabel(leitor_row, text=f"📍 {leitor}", font=("Roboto", 10, "bold"), text_color="#FF4081", anchor="w", fg_color="transparent").pack(side="left")
-
-        # Linha 4: Dispositivo (PC icon)
-        if dispositivo:
-            disp_row = ctk.CTkFrame(info_col, fg_color="transparent")
-            disp_row.pack(fill="x")
-            ctk.CTkLabel(disp_row, text=f"🖥️ {dispositivo}", font=("Roboto", 10), text_color="#42A5F5", anchor="w", fg_color="transparent").pack(side="left")
-
-        # Linha 5: Evento (Opcional, em amarelo se existir)
-        if evento and evento != nome:
-            ctk.CTkLabel(info_col, text=evento, font=("Roboto", 10, "italic"), text_color="#facc15", anchor="w", fg_color="transparent").pack(fill="x", pady=(2, 0))
-
-        # Limita quantidade de cards e atualiza contador
-        filhos = self.scroll_biometria.winfo_children()
-        total = len(filhos)
-        if total > 50:
-            filhos[-1].destroy()
-            total = 50
-
-        if hasattr(self, 'lbl_contador_bio'):
-            self.lbl_contador_bio.configure(text=f"{total} total")
 
 if __name__ == "__main__":
     dados_sistema = carregar_dados_sistema()
