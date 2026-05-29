@@ -15,8 +15,13 @@ import re
 import csv
 import base64
 from datetime import datetime
-from bs4 import BeautifulSoup
-from playwright.sync_api import sync_playwright
+try:
+    from bs4 import BeautifulSoup
+    from playwright.sync_api import sync_playwright
+    BIO_LIBS_INSTALLED = True
+except ImportError:
+    BIO_LIBS_INSTALLED = False
+
 from tkinter import filedialog
 
 # Configuração de baixa latência para OpenCV/FFMPEG
@@ -547,6 +552,8 @@ class CentralMonitoramento(ctk.CTk):
         self.ultima_predefinicao = None
         self.aba_ativa = "Câmeras"
         self.tamanho_preview = "Pequeno"
+        self.biometria_habilitada = False
+        self.bio_browser_solicitado = False
         self.iconic_state = False
         self.zoom_stop_timer = None
         self.ctrl_pressionado = False
@@ -643,7 +650,7 @@ class CentralMonitoramento(ctk.CTk):
 
         # Controle da Sidebar
         self.sidebar_visible = True
-        self.sidebar_biometria_visible = True
+        self.sidebar_biometria_visible = False # Começa fechada ou baseada na habilitação
 
         # --- LAYOUT ATUALIZADO ---
         self.grid_columnconfigure(0, weight=0) # Sidebar fixa (Esquerda)
@@ -748,7 +755,7 @@ class CentralMonitoramento(ctk.CTk):
 
         # 4. Container Toggle Biometria (Coluna 3)
         self.container_toggle_direita = ctk.CTkFrame(self, fg_color=self.BG_PANEL, corner_radius=0)
-        self.container_toggle_direita.grid(row=0, column=3, sticky="ns")
+        # Não damos grid() aqui ainda, faremos em atualizar_visibilidade_biometria
 
         self.lbl_eventos_vertical = ctk.CTkLabel(
             self.container_toggle_direita,
@@ -773,7 +780,7 @@ class CentralMonitoramento(ctk.CTk):
 
         # 5. Sidebar Biometria (Coluna 4)
         self.sidebar_biometria = ctk.CTkFrame(self, width=350, corner_radius=0, fg_color=self.BG_SIDEBAR)
-        self.sidebar_biometria.grid(row=0, column=4, sticky="nsew")
+        # Não damos grid() aqui ainda
 
         ctk.CTkLabel(self.sidebar_biometria, text="EVENTOS EM TEMPO REAL", font=("Roboto", 16, "bold"), text_color=self.ACCENT_RED).pack(pady=10)
 
@@ -820,8 +827,7 @@ class CentralMonitoramento(ctk.CTk):
         self._window_scaling = self._get_window_scaling()
         self._loop_counter = 0
 
-        # Inicia Monitoramento Biometria
-        threading.Thread(target=self.monitorar_biometria_loop, daemon=True).start()
+        self.atualizar_visibilidade_biometria()
 
         self.loop_exibicao()
 
@@ -906,6 +912,25 @@ class CentralMonitoramento(ctk.CTk):
             self.sidebar_biometria.grid(row=0, column=4, sticky="nsew")
             self.btn_toggle_biometria.configure(text="▶")
             self.sidebar_biometria_visible = True
+
+    def atualizar_visibilidade_biometria(self):
+        """Aplica a visibilidade dos componentes de biometria baseado em self.biometria_habilitada."""
+        if self.biometria_habilitada:
+            self.container_toggle_direita.grid(row=0, column=3, sticky="ns")
+            if self.sidebar_biometria_visible:
+                self.sidebar_biometria.grid(row=0, column=4, sticky="nsew")
+                self.btn_toggle_biometria.configure(text="▶")
+            else:
+                self.sidebar_biometria.grid_forget()
+                self.btn_toggle_biometria.configure(text="◀")
+
+            # Se habilitar pela primeira vez e não estiver rodando, inicia
+            if not hasattr(self, 'bio_thread_rodando') or not self.bio_thread_rodando:
+                self.bio_thread_rodando = True
+                threading.Thread(target=self.monitorar_biometria_loop, daemon=True).start()
+        else:
+            self.container_toggle_direita.grid_forget()
+            self.sidebar_biometria.grid_forget()
 
     # --- LÓGICA PTZ ---
     def ao_scroll_mouse(self, event):
@@ -1094,6 +1119,8 @@ class CentralMonitoramento(ctk.CTk):
         self.sidebar_biometria.grid_forget()
         self.container_toggle_direita.grid_forget()
 
+        # Se biometria estiver desabilitada, o grid só tem 3 colunas efetivas no modo normal,
+        # mas na estrutura da janela sempre configuramos 5 colunas.
         self.main_frame.grid_configure(column=0, columnspan=5)
 
         self.grid_frame.pack_forget()
@@ -1124,11 +1151,14 @@ class CentralMonitoramento(ctk.CTk):
         
         self.container_toggle.grid(row=0, column=1, sticky="ns")
 
-        if self.sidebar_biometria_visible:
-            self.sidebar_biometria.grid(row=0, column=4, sticky="nsew")
+        if self.biometria_habilitada:
+            self.container_toggle_direita.grid(row=0, column=3, sticky="ns")
+            if self.sidebar_biometria_visible:
+                self.sidebar_biometria.grid(row=0, column=4, sticky="nsew")
 
-        self.container_toggle_direita.grid(row=0, column=3, sticky="ns")
-
+        # Se biometria desabilitada, main_frame poderia expandir?
+        # A regra ABI pede container recolhível, se desativado nas configs ele some.
+        # Vamos manter o main_frame na coluna 2.
         self.main_frame.grid_configure(column=2, columnspan=1)
         
         self.grid_frame.pack_forget()
@@ -1157,9 +1187,9 @@ class CentralMonitoramento(ctk.CTk):
                     geom = dados.get("geometry")
                     if geom: self.geometry(geom)
                     self.aba_ativa = dados.get("active_tab", "Câmeras")
-                    # self.ultima_predefinicao é agora definida pela regra de "primeira predefinição" no __init__
                     self.slot_selecionado = dados.get("slot_selecionado", 0)
                     self.tamanho_preview = dados.get("tamanho_preview", "Pequeno")
+                    self.biometria_habilitada = dados.get("biometria_habilitada", False)
                     if self.tamanho_preview == "Médio":
                         self.tamanho_preview = "Grande"
             except Exception as e: print(f"Erro ao carregar janela: {e}")
@@ -1179,8 +1209,14 @@ class CentralMonitoramento(ctk.CTk):
             if getattr(self, 'sidebar_biometria_visible', True):
                 self.sidebar_biometria.grid(row=0, column=4, sticky="nsew")
 
-            # Re-grid Container Toggle Direita
-            self.container_toggle_direita.grid(row=0, column=3, sticky="ns")
+            # Re-grid Biometria Components
+            if getattr(self, 'biometria_habilitada', False):
+                self.container_toggle_direita.grid(row=0, column=3, sticky="ns")
+                if getattr(self, 'sidebar_biometria_visible', True):
+                    self.sidebar_biometria.grid(row=0, column=4, sticky="nsew")
+            else:
+                self.container_toggle_direita.grid_forget()
+                self.sidebar_biometria.grid_forget()
 
             # Re-grid Main Frame
             if self.em_tela_cheia:
@@ -1233,7 +1269,8 @@ class CentralMonitoramento(ctk.CTk):
                     "last_predefinicao": self.ultima_predefinicao,
                     "slot_selecionado": self.slot_selecionado,
                     "tamanho_preview": self.tamanho_preview,
-                    "num_slots": self.num_slots
+                    "num_slots": self.num_slots,
+                    "biometria_habilitada": self.biometria_habilitada
                 }
                 with open(self.arquivo_janela, "w") as f: json.dump(dados, f)
         except Exception as e: print(f"Erro ao salvar janela: {e}")
@@ -1695,7 +1732,7 @@ class CentralMonitoramento(ctk.CTk):
     def abrir_janela_configuracoes(self):
         modal = ctk.CTkToplevel(self)
         modal.title("Configurações")
-        modal.geometry("400x420")
+        modal.geometry("400x600")
         modal.resizable(False, False)
         modal.attributes("-topmost", True)
 
@@ -1740,6 +1777,29 @@ class CentralMonitoramento(ctk.CTk):
                                            unselected_hover_color=self.ACCENT_WINE)
         seg_grid.set(str(self.num_slots))
         seg_grid.pack(pady=10, padx=20, fill="x")
+
+        # Configurações de Biometria
+        ctk.CTkLabel(modal, text="MONITORAMENTO BIOMÉTRICO", font=("Roboto", 16, "bold"), text_color=self.ACCENT_RED).pack(pady=(30, 10))
+
+        def toggle_bio(valor):
+            self.biometria_habilitada = valor
+            self.atualizar_visibilidade_biometria()
+
+        if BIO_LIBS_INSTALLED:
+            switch_bio = ctk.CTkSwitch(modal, text="Habilitar Monitoramento em Tempo Real",
+                                        command=lambda: toggle_bio(switch_bio.get()),
+                                        progress_color=self.ACCENT_RED)
+            if self.biometria_habilitada: switch_bio.select()
+            switch_bio.pack(pady=10, padx=20, anchor="w")
+
+            btn_open_browser = ctk.CTkButton(modal, text="🌐 Abrir Navegador de Monitoramento",
+                                              fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
+                                              height=40,
+                                              command=lambda: [modal.destroy(), self.abrir_navegador_biometria()])
+            btn_open_browser.pack(pady=20, padx=40, fill="x")
+        else:
+            ctk.CTkLabel(modal, text="Recurso indisponível: 'playwright' e 'beautifulsoup4' não encontrados.",
+                         text_color=self.ACCENT_RED, font=("Roboto", 12)).pack(pady=10)
 
     def mudar_quantidade_slots(self, nova_qtd):
         """Altera a quantidade de slots do grid e reconstrói a interface."""
@@ -3295,30 +3355,55 @@ class CentralMonitoramento(ctk.CTk):
         except: return []
 
     def monitorar_biometria_loop(self):
+        self.bio_browser_aberto = False
+        while self.biometria_habilitada:
+            try:
+                self._executar_loop_scraping()
+            except Exception as e:
+                print(f"Erro no loop de biometria: {e}")
+                time.sleep(5)
+        self.bio_thread_rodando = False
+
+    def abrir_navegador_biometria(self):
+        """Sinaliza para o loop de monitoramento abrir o navegador em modo visível."""
+        self.bio_browser_solicitado = True
+        # Se biometria não estiver habilitada, habilita
+        if not self.biometria_habilitada:
+            self.biometria_habilitada = True
+            self.atualizar_visibilidade_biometria()
+
+    def _executar_loop_scraping(self):
         with sync_playwright() as p:
+            headless = not getattr(self, 'bio_browser_solicitado', False)
             browser = None
             for fallback in ["chromium", "chrome", "msedge"]:
                 try:
-                    if fallback == "chromium": browser = p.chromium.launch(headless=True, args=["--start-maximized"])
-                    else: browser = p.chromium.launch(headless=True, channel=fallback, args=["--start-maximized"])
+                    if fallback == "chromium": browser = p.chromium.launch(headless=headless, args=["--start-maximized"])
+                    else: browser = p.chromium.launch(headless=headless, channel=fallback, args=["--start-maximized"])
                     break
                 except: continue
             if not browser: return
-
+            self.bio_browser_solicitado = False # Reseta sinal
             context = browser.new_context(no_viewport=True)
             page = context.new_page()
             try:
                 page.goto(self.URL_LOGIN_BIO)
-                page.fill("#username", self.USUARIO_BIO)
-                page.fill("#password", self.SENHA_BIO)
-                page.locator("input[type='submit'], button, a.login-btn").first.click()
-                page.wait_for_url(re.compile(r"(main|dashboard)\.do"), timeout=30000)
-                time.sleep(5)
+                if self.USUARIO_BIO and self.SENHA_BIO:
+                    page.fill("#username", self.USUARIO_BIO)
+                    page.fill("#password", self.SENHA_BIO)
+                    page.locator("input[type='submit'], button, a.login-btn").first.click()
+
+                # Aguarda redirecionamento ou interação do usuário
+                # Timeout maior para permitir que o usuário faça login manualmente se necessário
+                try:
+                    page.wait_for_url(re.compile(r"(main|dashboard|realTimeMonitor)\.do"), timeout=15000)
+                except: pass
+                time.sleep(2)
             except:
                 browser.close()
                 return
 
-            while True:
+            while self.biometria_habilitada and not getattr(self, 'bio_browser_solicitado', False):
                 try:
                     fontes = [page] + page.frames
                     for fonte in fontes:
@@ -3356,6 +3441,8 @@ class CentralMonitoramento(ctk.CTk):
                         self.eventos_com_foto_processados.clear()
                     time.sleep(0.25)
                 except: time.sleep(2)
+
+            browser.close()
 
     def atualizar_relatorio_html_bio(self):
         registros = []
