@@ -1084,22 +1084,32 @@ class CentralMonitoramento(ctk.CTk):
         self.btn_toggle_sidebar_right.pack(side="left", fill="y")
 
         # 5. Sidebar Direita (Coluna 4)
-        self.sidebar_right = ctk.CTkFrame(self, width=400, corner_radius=0, fg_color=self.BG_SIDEBAR)
+        self.sidebar_right = ctk.CTkFrame(self, width=450, corner_radius=0, fg_color=self.BG_SIDEBAR)
         self.sidebar_right.grid(row=0, column=4, sticky="nsew")
         self.sidebar_right_visible = True
 
         # Título da Sidebar Direita
-        self.header_bio = ctk.CTkFrame(self.sidebar_right, fg_color=self.BG_PANEL, height=90, corner_radius=0)
+        self.header_bio = ctk.CTkFrame(self.sidebar_right, fg_color=self.BG_PANEL, height=110, corner_radius=0)
         self.header_bio.pack(fill="x")
         self.header_bio.pack_propagate(False)
 
         ctk.CTkLabel(self.header_bio, text="EVENTOS BIOMÉTRICOS", font=("Roboto", 16, "bold"), text_color="#14b8a6").pack(pady=(5,0))
 
-        self.btn_iniciar_bio = ctk.CTkButton(self.header_bio, text="Iniciar Monitoramento", height=24,
-                                             fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
+        container_btns_bio = ctk.CTkFrame(self.header_bio, fg_color="transparent")
+        container_btns_bio.pack(pady=5)
+
+        self.btn_iniciar_bio = ctk.CTkButton(container_btns_bio, text="Iniciar", width=100, height=24,
+                                             fg_color=self.GRAY_DARK, hover_color="#2dd4bf",
                                              font=("Roboto", 11, "bold"),
                                              command=self._iniciar_monitoramento_bio)
-        self.btn_iniciar_bio.pack(pady=5)
+        self.btn_iniciar_bio.pack(side="left", padx=5)
+
+        self.btn_parar_bio = ctk.CTkButton(container_btns_bio, text="Parar", width=100, height=24,
+                                           fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
+                                           font=("Roboto", 11, "bold"),
+                                           state="disabled",
+                                           command=self._parar_monitoramento_bio)
+        self.btn_parar_bio.pack(side="left", padx=5)
 
         self.lbl_total_bio = ctk.CTkLabel(self.header_bio, text="0 total", font=("Roboto", 10), text_color=self.TEXT_S)
         self.lbl_total_bio.pack()
@@ -1155,9 +1165,16 @@ class CentralMonitoramento(ctk.CTk):
             return
 
         print("SISTEMA: Iniciando monitoramento biométrico...")
-        self.btn_iniciar_bio.configure(state="disabled", text="Monitorando...")
+        self.btn_iniciar_bio.configure(state="disabled", text="Ativo", fg_color="#14b8a6")
+        self.btn_parar_bio.configure(state="normal")
         self.bio_thread = BioMonitorThread(self.queue_bio)
         self.bio_thread.start()
+
+    def _parar_monitoramento_bio(self):
+        if hasattr(self, 'bio_thread'):
+            print("SISTEMA: Parando monitoramento biométrico...")
+            self.btn_parar_bio.configure(state="disabled", text="Parando...")
+            self.bio_thread.parar()
 
     def _processar_queue_bio(self):
         """Processa eventos biométricos vindos da thread de monitoramento."""
@@ -1167,7 +1184,8 @@ class CentralMonitoramento(ctk.CTk):
                 if msg.get("type") == "BIO_EVENT":
                     self.adicionar_card_evento(msg["data"])
                 elif msg.get("type") == "BIO_STOPPED":
-                    self.btn_iniciar_bio.configure(state="normal", text="Iniciar Monitoramento")
+                    self.btn_iniciar_bio.configure(state="normal", text="Iniciar", fg_color=self.GRAY_DARK)
+                    self.btn_parar_bio.configure(state="disabled", text="Parar")
         except:
             pass
 
