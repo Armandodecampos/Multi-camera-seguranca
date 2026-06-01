@@ -1392,6 +1392,27 @@ class CentralMonitoramento(ctk.CTk):
                         elif event.delta: # Windows/Mac
                             canvas.yview_moveto(cur_y + (step * int(-1 * (event.delta / 120))))
                     return "break"
+
+            # Verifica se o mouse está sobre a sidebar DIREITA (Biometria)
+            if self.sidebar_right.winfo_viewable():
+                rx = self.sidebar_right.winfo_rootx()
+                ry = self.sidebar_right.winfo_rooty()
+                rw = self.sidebar_right.winfo_width()
+                rh = self.sidebar_right.winfo_height()
+
+                if rx <= event.x_root <= rx + rw and ry <= event.y_root <= ry + rh:
+                    scroll_obj = self.scroll_eventos
+                    canvas = getattr(scroll_obj, "_parent_canvas", None) or getattr(scroll_obj, "_canvas", None)
+                    if canvas:
+                        cur_y = canvas.yview()[0]
+                        step = 0.05
+                        if event.num == 4: # Linux up
+                            canvas.yview_moveto(cur_y - step)
+                        elif event.num == 5: # Linux down
+                            canvas.yview_moveto(cur_y + step)
+                        elif event.delta: # Windows/Mac
+                            canvas.yview_moveto(cur_y + (step * int(-1 * (event.delta / 120))))
+                    return "break"
         except: pass
 
         direcao = None
