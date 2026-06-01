@@ -23,25 +23,8 @@ from playwright.sync_api import sync_playwright
 
 # Configurações do sistema Biométrico
 URL_LOGIN_BIO = "http://192.168.7.9:8098/bioLogin.do"
-
-def carregar_credenciais_bio():
-    """Carrega as credenciais do sistema biométrico de um arquivo externo."""
-    user_dir = os.path.expanduser("~")
-    caminho_config = os.path.join(user_dir, "bio_config_abi.json")
-    if os.path.exists(caminho_config):
-        try:
-            with open(caminho_config, "r", encoding='utf-8') as f:
-                dados = json.load(f)
-                return dados.get("usuario", "admin"), dados.get("senha", "password")
-        except: pass
-
-    # Se não existir, cria um arquivo padrão (exemplo) para o usuário preencher
-    padrao = {"usuario": "insira_usuario_aqui", "senha": "insira_senha_aqui"}
-    try:
-        with open(caminho_config, "w", encoding='utf-8') as f:
-            json.dump(padrao, f, indent=4)
-    except: pass
-    return padrao["usuario"], padrao["senha"]
+USUARIO_BIO = "armando.campos"
+SENHA_BIO = "armandocampos.1"
 
 # Diretórios para salvar os relatórios e imagens extraídas
 DIRETORIO_SAIDA = "relatorio_acessos"
@@ -203,8 +186,6 @@ class BioMonitorThread(threading.Thread):
     def run(self):
         with sync_playwright() as p:
             try:
-                usuario_bio, senha_bio = carregar_credenciais_bio()
-
                 # Tenta iniciar navegador (Visível a pedido do usuário)
                 try:
                     self.browser = p.chromium.launch(headless=False)
@@ -224,8 +205,8 @@ class BioMonitorThread(threading.Thread):
                 self.page.wait_for_selector("#password", timeout=15000)
 
                 print("[*] BIO: Efetuando login...")
-                self.page.fill("#username", usuario_bio)
-                self.page.fill("#password", senha_bio)
+                self.page.fill("#username", USUARIO_BIO)
+                self.page.fill("#password", SENHA_BIO)
 
                 btn_login = self.page.locator("input[type='submit'], button, a.login-btn")
                 btn_login.first.click()
@@ -1112,13 +1093,13 @@ class CentralMonitoramento(ctk.CTk):
         self.header_bio.pack(fill="x")
         self.header_bio.pack_propagate(False)
 
-        ctk.CTkLabel(self.header_bio, text="EVENTOS BIOMÉTRICOS", font=("Roboto", 16, "bold"), text_color="#14b8a6").pack(pady=(5,0))
+        ctk.CTkLabel(self.header_bio, text="EVENTOS BIOMÉTRICOS", font=("Roboto", 16, "bold"), text_color=self.ACCENT_RED).pack(pady=(5,0))
 
         container_btns_bio = ctk.CTkFrame(self.header_bio, fg_color="transparent")
         container_btns_bio.pack(pady=5)
 
         self.btn_iniciar_bio = ctk.CTkButton(container_btns_bio, text="Iniciar", width=100, height=24,
-                                             fg_color=self.GRAY_DARK, hover_color="#2dd4bf",
+                                             fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
                                              font=("Roboto", 11, "bold"),
                                              command=self._iniciar_monitoramento_bio)
         self.btn_iniciar_bio.pack(side="left", padx=5)
@@ -1184,7 +1165,7 @@ class CentralMonitoramento(ctk.CTk):
             return
 
         print("SISTEMA: Iniciando monitoramento biométrico...")
-        self.btn_iniciar_bio.configure(state="disabled", text="Ativo", fg_color="#14b8a6")
+        self.btn_iniciar_bio.configure(state="disabled", text="Ativo", fg_color=self.ACCENT_RED)
         self.btn_parar_bio.configure(state="normal")
         self.bio_thread = BioMonitorThread(self.queue_bio)
         self.bio_thread.start()
@@ -1246,7 +1227,7 @@ class CentralMonitoramento(ctk.CTk):
                 f.destroy()
 
         # Borda colorida à esquerda
-        borda_cor = "#14b8a6" if dados.get("foto") else "#f59e0b"
+        borda_cor = self.ACCENT_RED if dados.get("foto") else "#f59e0b"
         borda_l = ctk.CTkFrame(card, width=4, fg_color=borda_cor)
         borda_l.pack(side="left", fill="y")
 
@@ -1274,8 +1255,8 @@ class CentralMonitoramento(ctk.CTk):
         info_f = ctk.CTkFrame(header_f, fg_color="transparent")
         info_f.pack(side="left", fill="both", expand=True)
 
-        ctk.CTkLabel(info_f, text=f"ID: {dados['id_usuario']}", font=("Roboto", 10, "bold"), text_color="#2dd4bf",
-                     fg_color="#1a2e2a", corner_radius=3).pack(anchor="w")
+        ctk.CTkLabel(info_f, text=f"ID: {dados['id_usuario']}", font=("Roboto", 10, "bold"), text_color=self.ACCENT_RED,
+                     fg_color="#1a1a1a", corner_radius=3).pack(anchor="w")
 
         lbl_nome_bio = ctk.CTkLabel(info_f, text=dados["nome"], font=("Roboto", 14, "bold"), text_color="white",
                                     anchor="w", justify="left", wraplength=300)
@@ -1288,7 +1269,7 @@ class CentralMonitoramento(ctk.CTk):
 
         # Evento / Leitor / Dispositivo
         if dados.get("leitor"):
-            lbl_leitor_bio = ctk.CTkLabel(inner, text=f"📍 {dados['leitor']}", font=("Roboto", 12, "bold"), text_color="#2dd4bf",
+            lbl_leitor_bio = ctk.CTkLabel(inner, text=f"📍 {dados['leitor']}", font=("Roboto", 12, "bold"), text_color=self.ACCENT_RED,
                                           anchor="w", justify="left", wraplength=300)
             lbl_leitor_bio.pack(fill="x", anchor="w")
             try: lbl_leitor_bio._label.configure(wraplength=300)
