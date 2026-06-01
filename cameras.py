@@ -186,14 +186,14 @@ class BioMonitorThread(threading.Thread):
     def run(self):
         with sync_playwright() as p:
             try:
-                # Tenta iniciar navegador
+                # Tenta iniciar navegador (Visível a pedido do usuário)
                 try:
-                    self.browser = p.chromium.launch(headless=True)
+                    self.browser = p.chromium.launch(headless=False)
                 except:
                     try:
-                        self.browser = p.chromium.launch(headless=True, channel="chrome")
+                        self.browser = p.chromium.launch(headless=False, channel="chrome")
                     except:
-                        self.browser = p.chromium.launch(headless=True, channel="msedge")
+                        self.browser = p.chromium.launch(headless=False, channel="msedge")
 
                 self.context = self.browser.new_context()
                 self.page = self.context.new_page()
@@ -220,7 +220,10 @@ class BioMonitorThread(threading.Thread):
                 print(f"[-] BIO: Erro no monitoramento biométrico: {e}")
             finally:
                 if self.browser:
-                    self.browser.close()
+                    try: self.browser.close()
+                    except: pass
+                if self.queue_ui:
+                    self.queue_ui.put({"type": "BIO_STOPPED"})
 
     def loop_monitoramento(self):
         ultimos_eventos_processados = set()
@@ -1086,11 +1089,18 @@ class CentralMonitoramento(ctk.CTk):
         self.sidebar_right_visible = True
 
         # Título da Sidebar Direita
-        self.header_bio = ctk.CTkFrame(self.sidebar_right, fg_color=self.BG_PANEL, height=60, corner_radius=0)
+        self.header_bio = ctk.CTkFrame(self.sidebar_right, fg_color=self.BG_PANEL, height=90, corner_radius=0)
         self.header_bio.pack(fill="x")
         self.header_bio.pack_propagate(False)
 
-        ctk.CTkLabel(self.header_bio, text="EVENTOS BIOMÉTRICOS", font=("Roboto", 16, "bold"), text_color="#14b8a6").pack(pady=(10,0))
+        ctk.CTkLabel(self.header_bio, text="EVENTOS BIOMÉTRICOS", font=("Roboto", 16, "bold"), text_color="#14b8a6").pack(pady=(5,0))
+
+        self.btn_iniciar_bio = ctk.CTkButton(self.header_bio, text="Iniciar Monitoramento", height=24,
+                                             fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
+                                             font=("Roboto", 11, "bold"),
+                                             command=self._iniciar_monitoramento_bio)
+        self.btn_iniciar_bio.pack(pady=5)
+
         self.lbl_total_bio = ctk.CTkLabel(self.header_bio, text="0 total", font=("Roboto", 10), text_color=self.TEXT_S)
         self.lbl_total_bio.pack()
 
@@ -1117,7 +1127,6 @@ class CentralMonitoramento(ctk.CTk):
         # Delay inicial: A interface carrega primeiro, as câmeras conectam depois
         # Reduzido para 300ms para uma experiência mais "fluida"
         self.after(300, self._iniciar_sistema_conexoes)
-        self.after(500, self._iniciar_monitoramento_bio)
         print("SISTEMA: Pronto.")
         
         def safe_zoom():
@@ -1141,7 +1150,12 @@ class CentralMonitoramento(ctk.CTk):
         self.loop_exibicao()
 
     def _iniciar_monitoramento_bio(self):
+        if hasattr(self, 'bio_thread') and self.bio_thread.is_alive():
+            self.abrir_modal_alerta("Aviso", "O monitoramento biométrico já está em execução.")
+            return
+
         print("SISTEMA: Iniciando monitoramento biométrico...")
+        self.btn_iniciar_bio.configure(state="disabled", text="Monitorando...")
         self.bio_thread = BioMonitorThread(self.queue_bio)
         self.bio_thread.start()
 
@@ -1152,6 +1166,8 @@ class CentralMonitoramento(ctk.CTk):
                 msg = self.queue_bio.get_nowait()
                 if msg.get("type") == "BIO_EVENT":
                     self.adicionar_card_evento(msg["data"])
+                elif msg.get("type") == "BIO_STOPPED":
+                    self.btn_iniciar_bio.configure(state="normal", text="Iniciar Monitoramento")
         except:
             pass
 
