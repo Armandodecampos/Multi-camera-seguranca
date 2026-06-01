@@ -1084,7 +1084,7 @@ class CentralMonitoramento(ctk.CTk):
         self.btn_toggle_sidebar_right.pack(side="left", fill="y")
 
         # 5. Sidebar Direita (Coluna 4)
-        self.sidebar_right = ctk.CTkFrame(self, width=675, corner_radius=0, fg_color=self.BG_SIDEBAR)
+        self.sidebar_right = ctk.CTkFrame(self, width=1000, corner_radius=0, fg_color=self.BG_SIDEBAR)
         self.sidebar_right.grid(row=0, column=4, sticky="nsew")
         self.sidebar_right_visible = True
 
@@ -1249,7 +1249,7 @@ class CentralMonitoramento(ctk.CTk):
                      fg_color="#1a2e2a", corner_radius=3).pack(anchor="w")
 
         lbl_nome_bio = ctk.CTkLabel(info_f, text=dados["nome"], font=("Roboto", 12, "bold"), text_color="white",
-                                    anchor="w", justify="left", wraplength=550)
+                                    anchor="w", justify="left", wraplength=850)
         lbl_nome_bio.pack(fill="x", anchor="w")
 
         # Data/Hora
@@ -1258,17 +1258,17 @@ class CentralMonitoramento(ctk.CTk):
         # Evento / Leitor / Dispositivo
         if dados.get("leitor"):
             lbl_leitor_bio = ctk.CTkLabel(inner, text=f"📍 {dados['leitor']}", font=("Roboto", 10, "bold"), text_color="#2dd4bf",
-                                          anchor="w", justify="left", wraplength=550)
+                                          anchor="w", justify="left", wraplength=850)
             lbl_leitor_bio.pack(fill="x", anchor="w")
 
         if dados.get("evento"):
             lbl_evento_bio = ctk.CTkLabel(inner, text=dados["evento"], font=("Roboto", 10), text_color="#facc15",
-                                          anchor="w", justify="left", wraplength=550)
+                                          anchor="w", justify="left", wraplength=850)
             lbl_evento_bio.pack(fill="x", anchor="w")
 
         if dados.get("dispositivo"):
             lbl_disp_bio = ctk.CTkLabel(inner, text=f"🖥️ {dados['dispositivo']}", font=("Roboto", 10), text_color="#cbd5e1",
-                                        anchor="w", justify="left", wraplength=550)
+                                        anchor="w", justify="left", wraplength=850)
             lbl_disp_bio.pack(fill="x", anchor="w")
 
         self.eventos_bio_cards[id_reg] = {'frame': card, 'tem_foto': tem_foto}
