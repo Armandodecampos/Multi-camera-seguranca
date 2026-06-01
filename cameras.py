@@ -23,8 +23,25 @@ from playwright.sync_api import sync_playwright
 
 # Configurações do sistema Biométrico
 URL_LOGIN_BIO = "http://192.168.7.9:8098/bioLogin.do"
-USUARIO_BIO = "armando.campos"
-SENHA_BIO = "armandocampos.1"
+
+def carregar_credenciais_bio():
+    """Carrega as credenciais do sistema biométrico de um arquivo externo."""
+    user_dir = os.path.expanduser("~")
+    caminho_config = os.path.join(user_dir, "bio_config_abi.json")
+    if os.path.exists(caminho_config):
+        try:
+            with open(caminho_config, "r", encoding='utf-8') as f:
+                dados = json.load(f)
+                return dados.get("usuario", "admin"), dados.get("senha", "password")
+        except: pass
+
+    # Se não existir, cria um arquivo padrão (exemplo) para o usuário preencher
+    padrao = {"usuario": "insira_usuario_aqui", "senha": "insira_senha_aqui"}
+    try:
+        with open(caminho_config, "w", encoding='utf-8') as f:
+            json.dump(padrao, f, indent=4)
+    except: pass
+    return padrao["usuario"], padrao["senha"]
 
 # Diretórios para salvar os relatórios e imagens extraídas
 DIRETORIO_SAIDA = "relatorio_acessos"
@@ -186,6 +203,8 @@ class BioMonitorThread(threading.Thread):
     def run(self):
         with sync_playwright() as p:
             try:
+                usuario_bio, senha_bio = carregar_credenciais_bio()
+
                 # Tenta iniciar navegador (Visível a pedido do usuário)
                 try:
                     self.browser = p.chromium.launch(headless=False)
@@ -205,8 +224,8 @@ class BioMonitorThread(threading.Thread):
                 self.page.wait_for_selector("#password", timeout=15000)
 
                 print("[*] BIO: Efetuando login...")
-                self.page.fill("#username", USUARIO_BIO)
-                self.page.fill("#password", SENHA_BIO)
+                self.page.fill("#username", usuario_bio)
+                self.page.fill("#password", senha_bio)
 
                 btn_login = self.page.locator("input[type='submit'], button, a.login-btn")
                 btn_login.first.click()
@@ -957,7 +976,7 @@ class CentralMonitoramento(ctk.CTk):
         self.grid_columnconfigure(1, weight=0) # Botão toggle fixo
         self.grid_columnconfigure(2, weight=1) # Main expande
         self.grid_columnconfigure(3, weight=0) # Botão toggle direita
-        self.grid_columnconfigure(4, weight=0, minsize=800) # Sidebar direita
+        self.grid_columnconfigure(4, weight=0, minsize=400) # Sidebar direita
         self.grid_rowconfigure(0, weight=1)
 
         # 1. Sidebar (Coluna 0)
@@ -1084,7 +1103,7 @@ class CentralMonitoramento(ctk.CTk):
         self.btn_toggle_sidebar_right.pack(side="left", fill="y")
 
         # 5. Sidebar Direita (Coluna 4)
-        self.sidebar_right = ctk.CTkFrame(self, width=800, corner_radius=0, fg_color=self.BG_SIDEBAR)
+        self.sidebar_right = ctk.CTkFrame(self, width=400, corner_radius=0, fg_color=self.BG_SIDEBAR)
         self.sidebar_right.grid(row=0, column=4, sticky="nsew")
         self.sidebar_right_visible = True
 
@@ -1197,24 +1216,34 @@ class CentralMonitoramento(ctk.CTk):
             # Se já tem foto ou a nova não tem foto, ignora update
             if existente.get('tem_foto') or not dados.get('foto'):
                 return
-            # Remove o antigo para reinserir no topo com foto
+            # Se precisamos atualizar para adicionar a foto, removemos o card sem foto
             existente['frame'].destroy()
             del self.eventos_bio_cards[id_reg]
 
         # Card de evento (Baseado no estilo do script original)
         card = ctk.CTkFrame(self.scroll_eventos, fg_color="#1f2937", border_width=1, border_color="#374151")
-        # Inserir no topo: precisamos gerenciar a ordem no scrollable frame.
-        # ctk.CTkScrollableFrame não tem insert(0), então usaremos pack_forget/pack em todos ou apenas pack e aceitar que novos ficam embaixo?
-        # O original injetava no topo. Vamos tentar pack(side="top", before=...) se possível ou apenas pack e depois pack_forget em todos e repack.
-        # Simplificação: pack normal (fica embaixo), mas o usuário provavelmente quer os novos em cima.
-        # Para native CTk, a forma mais fácil de por no topo é não usar pack e sim gerenciar manualmente ou repack.
-        # Vamos fazer um repack rápido se houver poucos cards.
+
+        # Otimização: Inserir no topo sem repack total se possível.
+        # Infelizmente ctk.CTkScrollableFrame usa uma estrutura interna complexa.
+        # O repack total de até 50 widgets é rápido o suficiente, mas vamos manter o limite sob controle.
 
         filhos = self.scroll_eventos.winfo_children()
         for f in filhos: f.pack_forget()
 
         card.pack(fill="x", pady=5, padx=5)
-        for f in filhos: f.pack(fill="x", pady=5, padx=5)
+        # Repack dos antigos abaixo do novo
+        for f in filhos[:49]: # Garante limite de 50 no repack
+            f.pack(fill="x", pady=5, padx=5)
+
+        # Destrói o 51º se houver
+        if len(filhos) >= 50:
+            for f in filhos[49:]:
+                # Encontra a chave do card a ser deletado da cache
+                for k, v in list(self.eventos_bio_cards.items()):
+                    if v['frame'] == f:
+                        del self.eventos_bio_cards[k]
+                        break
+                f.destroy()
 
         # Borda colorida à esquerda
         borda_cor = "#14b8a6" if dados.get("foto") else "#f59e0b"
@@ -1249,9 +1278,9 @@ class CentralMonitoramento(ctk.CTk):
                      fg_color="#1a2e2a", corner_radius=3).pack(anchor="w")
 
         lbl_nome_bio = ctk.CTkLabel(info_f, text=dados["nome"], font=("Roboto", 14, "bold"), text_color="white",
-                                    anchor="w", justify="left", wraplength=650)
+                                    anchor="w", justify="left", wraplength=300)
         lbl_nome_bio.pack(fill="x", anchor="w")
-        try: lbl_nome_bio._label.configure(wraplength=650)
+        try: lbl_nome_bio._label.configure(wraplength=300)
         except: pass
 
         # Data/Hora
@@ -1260,37 +1289,26 @@ class CentralMonitoramento(ctk.CTk):
         # Evento / Leitor / Dispositivo
         if dados.get("leitor"):
             lbl_leitor_bio = ctk.CTkLabel(inner, text=f"📍 {dados['leitor']}", font=("Roboto", 12, "bold"), text_color="#2dd4bf",
-                                          anchor="w", justify="left", wraplength=650)
+                                          anchor="w", justify="left", wraplength=300)
             lbl_leitor_bio.pack(fill="x", anchor="w")
-            try: lbl_leitor_bio._label.configure(wraplength=650)
+            try: lbl_leitor_bio._label.configure(wraplength=300)
             except: pass
 
         if dados.get("evento"):
             lbl_evento_bio = ctk.CTkLabel(inner, text=dados["evento"], font=("Roboto", 12), text_color="#facc15",
-                                          anchor="w", justify="left", wraplength=650)
+                                          anchor="w", justify="left", wraplength=300)
             lbl_evento_bio.pack(fill="x", anchor="w")
-            try: lbl_evento_bio._label.configure(wraplength=650)
+            try: lbl_evento_bio._label.configure(wraplength=300)
             except: pass
 
         if dados.get("dispositivo"):
             lbl_disp_bio = ctk.CTkLabel(inner, text=f"🖥️ {dados['dispositivo']}", font=("Roboto", 12), text_color="#cbd5e1",
-                                        anchor="w", justify="left", wraplength=650)
+                                        anchor="w", justify="left", wraplength=300)
             lbl_disp_bio.pack(fill="x", anchor="w")
-            try: lbl_disp_bio._label.configure(wraplength=650)
+            try: lbl_disp_bio._label.configure(wraplength=300)
             except: pass
 
         self.eventos_bio_cards[id_reg] = {'frame': card, 'tem_foto': tem_foto}
-
-        # Limite de 50 cards
-        while len(self.scroll_eventos.winfo_children()) > 50:
-            last = self.scroll_eventos.winfo_children()[-1]
-            # Encontra a chave do card a ser deletado
-            for k, v in list(self.eventos_bio_cards.items()):
-                if v['frame'] == last:
-                    del self.eventos_bio_cards[k]
-                    break
-            last.destroy()
-
         self.lbl_total_bio.configure(text=f"{len(self.eventos_bio_cards)} total")
 
     def _iniciar_sistema_conexoes(self):
@@ -1372,7 +1390,7 @@ class CentralMonitoramento(ctk.CTk):
             self.btn_toggle_sidebar_right.configure(text="◀")
             self.sidebar_right_visible = False
         else:
-            self.grid_columnconfigure(4, minsize=800)
+            self.grid_columnconfigure(4, minsize=400)
             self.sidebar_right.grid(row=0, column=4, sticky="nsew")
             self.btn_toggle_sidebar_right.configure(text="▶")
             self.sidebar_right_visible = True
@@ -1618,7 +1636,7 @@ class CentralMonitoramento(ctk.CTk):
 
         self.container_toggle_right.grid(row=0, column=3, sticky="ns")
         if self.sidebar_right_visible:
-            self.grid_columnconfigure(4, minsize=800)
+            self.grid_columnconfigure(4, minsize=400)
             self.sidebar_right.grid(row=0, column=4, sticky="nsew")
         else:
             self.grid_columnconfigure(4, minsize=0)
@@ -1676,7 +1694,7 @@ class CentralMonitoramento(ctk.CTk):
             # Re-grid Right Sidebar
             self.container_toggle_right.grid(row=0, column=3, sticky="ns")
             if getattr(self, 'sidebar_right_visible', True):
-                self.grid_columnconfigure(4, minsize=800)
+                self.grid_columnconfigure(4, minsize=400)
                 self.sidebar_right.grid(row=0, column=4, sticky="nsew")
             else:
                 self.grid_columnconfigure(4, minsize=0)
