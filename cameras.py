@@ -787,7 +787,7 @@ class CentralMonitoramento(ctk.CTk):
         self.configurar_variaveis_grid(janela_config.get("num_slots", 20))
 
         self.title("Sistema de Monitoramento ABI - Full Control V5 + PTZ")
-        self.geometry("1920x1000")
+        self.geometry("1800x1000")
         ctk.set_appearance_mode("Dark")
 
         # Credenciais para PTZ
@@ -957,7 +957,7 @@ class CentralMonitoramento(ctk.CTk):
         self.grid_columnconfigure(1, weight=0) # Botão toggle fixo
         self.grid_columnconfigure(2, weight=1) # Main expande
         self.grid_columnconfigure(3, weight=0) # Botão toggle direita
-        self.grid_columnconfigure(4, weight=0, minsize=1200) # Sidebar direita
+        self.grid_columnconfigure(4, weight=0, minsize=800) # Sidebar direita
         self.grid_rowconfigure(0, weight=1)
 
         # 1. Sidebar (Coluna 0)
@@ -1084,7 +1084,7 @@ class CentralMonitoramento(ctk.CTk):
         self.btn_toggle_sidebar_right.pack(side="left", fill="y")
 
         # 5. Sidebar Direita (Coluna 4)
-        self.sidebar_right = ctk.CTkFrame(self, width=1200, corner_radius=0, fg_color=self.BG_SIDEBAR)
+        self.sidebar_right = ctk.CTkFrame(self, width=800, corner_radius=0, fg_color=self.BG_SIDEBAR)
         self.sidebar_right.grid(row=0, column=4, sticky="nsew")
         self.sidebar_right_visible = True
 
@@ -1249,9 +1249,9 @@ class CentralMonitoramento(ctk.CTk):
                      fg_color="#1a2e2a", corner_radius=3).pack(anchor="w")
 
         lbl_nome_bio = ctk.CTkLabel(info_f, text=dados["nome"], font=("Roboto", 14, "bold"), text_color="white",
-                                    anchor="w", justify="left", wraplength=1000)
+                                    anchor="w", justify="left", wraplength=650)
         lbl_nome_bio.pack(fill="x", anchor="w")
-        try: lbl_nome_bio._label.configure(wraplength=1000)
+        try: lbl_nome_bio._label.configure(wraplength=650)
         except: pass
 
         # Data/Hora
@@ -1260,23 +1260,23 @@ class CentralMonitoramento(ctk.CTk):
         # Evento / Leitor / Dispositivo
         if dados.get("leitor"):
             lbl_leitor_bio = ctk.CTkLabel(inner, text=f"📍 {dados['leitor']}", font=("Roboto", 12, "bold"), text_color="#2dd4bf",
-                                          anchor="w", justify="left", wraplength=1000)
+                                          anchor="w", justify="left", wraplength=650)
             lbl_leitor_bio.pack(fill="x", anchor="w")
-            try: lbl_leitor_bio._label.configure(wraplength=1000)
+            try: lbl_leitor_bio._label.configure(wraplength=650)
             except: pass
 
         if dados.get("evento"):
             lbl_evento_bio = ctk.CTkLabel(inner, text=dados["evento"], font=("Roboto", 12), text_color="#facc15",
-                                          anchor="w", justify="left", wraplength=1000)
+                                          anchor="w", justify="left", wraplength=650)
             lbl_evento_bio.pack(fill="x", anchor="w")
-            try: lbl_evento_bio._label.configure(wraplength=1000)
+            try: lbl_evento_bio._label.configure(wraplength=650)
             except: pass
 
         if dados.get("dispositivo"):
             lbl_disp_bio = ctk.CTkLabel(inner, text=f"🖥️ {dados['dispositivo']}", font=("Roboto", 12), text_color="#cbd5e1",
-                                        anchor="w", justify="left", wraplength=1000)
+                                        anchor="w", justify="left", wraplength=650)
             lbl_disp_bio.pack(fill="x", anchor="w")
-            try: lbl_disp_bio._label.configure(wraplength=1000)
+            try: lbl_disp_bio._label.configure(wraplength=650)
             except: pass
 
         self.eventos_bio_cards[id_reg] = {'frame': card, 'tem_foto': tem_foto}
@@ -1368,9 +1368,11 @@ class CentralMonitoramento(ctk.CTk):
     def toggle_sidebar_right(self):
         if self.sidebar_right_visible:
             self.sidebar_right.grid_forget()
+            self.grid_columnconfigure(4, minsize=0)
             self.btn_toggle_sidebar_right.configure(text="◀")
             self.sidebar_right_visible = False
         else:
+            self.grid_columnconfigure(4, minsize=800)
             self.sidebar_right.grid(row=0, column=4, sticky="nsew")
             self.btn_toggle_sidebar_right.configure(text="▶")
             self.sidebar_right_visible = True
@@ -1616,7 +1618,10 @@ class CentralMonitoramento(ctk.CTk):
 
         self.container_toggle_right.grid(row=0, column=3, sticky="ns")
         if self.sidebar_right_visible:
+            self.grid_columnconfigure(4, minsize=800)
             self.sidebar_right.grid(row=0, column=4, sticky="nsew")
+        else:
+            self.grid_columnconfigure(4, minsize=0)
         
         self.grid_frame.pack_forget()
         padx_grid = 0 if self.slot_maximized is not None else 0
@@ -1671,7 +1676,10 @@ class CentralMonitoramento(ctk.CTk):
             # Re-grid Right Sidebar
             self.container_toggle_right.grid(row=0, column=3, sticky="ns")
             if getattr(self, 'sidebar_right_visible', True):
+                self.grid_columnconfigure(4, minsize=800)
                 self.sidebar_right.grid(row=0, column=4, sticky="nsew")
+            else:
+                self.grid_columnconfigure(4, minsize=0)
 
             self.update_idletasks()
         except Exception as e:
