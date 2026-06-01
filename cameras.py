@@ -4,6 +4,10 @@ import customtkinter as ctk
 from PIL import Image, ImageTk, ImageDraw
 import json
 import os
+import re
+import csv
+import base64
+import io
 import threading
 import time
 import socket
@@ -12,13 +16,332 @@ import requests
 from requests.auth import HTTPDigestAuth
 import subprocess
 import platform
+from datetime import datetime
 from tkinter import filedialog
+from bs4 import BeautifulSoup
+from playwright.sync_api import sync_playwright
+
+# Configurações do sistema Biométrico
+URL_LOGIN_BIO = "http://192.168.7.9:8098/bioLogin.do"
+USUARIO_BIO = "armando.campos"
+SENHA_BIO = "armandocampos.1"
+
+# Diretórios para salvar os relatórios e imagens extraídas
+DIRETORIO_SAIDA = "relatorio_acessos"
+DIRETORIO_FOTOS = os.path.join(DIRETORIO_SAIDA, "fotos")
+ARQUIVO_CSV = os.path.join(DIRETORIO_SAIDA, "historico_acessos.csv")
+ARQUIVO_HTML = os.path.join(DIRETORIO_SAIDA, "relatorio_visual.html")
+
+# Cria as pastas caso não existam
+os.makedirs(DIRETORIO_FOTOS, exist_ok=True)
+
 # Configuração de baixa latência para OpenCV/FFMPEG
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp;stimeout;3000000;buffer_size;2048000;analyzeduration;50000;probesize;50000;fflags;discardcorrupt;max_delay;500000;reorder_queue_size;16;rtsp_flags;prefer_tcp;reconnect;1;reconnect_streamed;1;reconnect_at_eof;1;allowed_media_types;video"
 cv2.setNumThreads(1)
 
 # Semáforo global para limitar conexões simultâneas (evita travamentos)
 sem_conexao = threading.Semaphore(20)
+
+# Global para sincronizar a data do sistema de monitoramento biométrico
+DATA_SISTEMA_ATUAL = datetime.now().strftime("%Y-%m-%d")
+
+def normalizar_data(data_str):
+    """Garante que a data esteja no formato YYYY-MM-DD HH:MM:SS."""
+    global DATA_SISTEMA_ATUAL
+    if not data_str:
+        return f"{DATA_SISTEMA_ATUAL} {datetime.now().strftime('%H:%M:%S')}"
+
+    if re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$", data_str):
+        DATA_SISTEMA_ATUAL = data_str.split(' ')[0]
+        return data_str
+
+    if re.match(r"^\d{2}:\d{2}:\d{2}$", data_str):
+        return f"{DATA_SISTEMA_ATUAL} {data_str}"
+
+    return data_str
+
+def salvar_foto_bio(base64_data, id_usuario, data_evento):
+    """Decodifica a string Base64 da imagem e salva em arquivo local."""
+    if not base64_data: return ""
+    if "," in base64_data: base64_data = base64_data.split(",")[1]
+    try:
+        data_safe = re.sub(r'[^0-9]', '_', data_evento)
+        nome_arquivo = f"{id_usuario}_{data_safe}.jpg"
+        caminho_completo = os.path.join(DIRETORIO_FOTOS, nome_arquivo)
+        with open(caminho_completo, "wb") as f:
+            f.write(base64.b64decode(base64_data))
+        return caminho_completo
+    except Exception as e:
+        print(f"[-] BIO: Erro ao salvar foto {id_usuario}: {e}")
+        return ""
+
+def registrar_evento(id_usuario, nome, evento, dispositivo, leitor, data_evento, base64_foto, queue_ui):
+    """Registra as informações capturadas e notifica a UI."""
+    caminho_foto_local = ""
+    if base64_foto:
+        caminho_foto_local = salvar_foto_bio(base64_foto, id_usuario, data_evento)
+
+    data_registro = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    registros_existentes = []
+    atualizado = False
+
+    if os.path.exists(ARQUIVO_CSV):
+        with open(ARQUIVO_CSV, mode='r', encoding='utf-8') as f:
+            reader = csv.reader(f)
+            cabecalho = next(reader, None)
+            for row in reader:
+                if len(row) >= 8:
+                    if row[1] == id_usuario and row[6] == data_evento:
+                        if not row[7] and caminho_foto_local: row[7] = caminho_foto_local
+                        if not row[5] and leitor: row[5] = leitor
+                        if (not row[4] or row[4] == "Geral") and dispositivo and dispositivo != "Geral":
+                            row[4] = dispositivo
+                        atualizado = True
+                    registros_existentes.append(row)
+
+    if not atualizado:
+        registros_existentes.append([data_registro, id_usuario, nome, evento, dispositivo, leitor, data_evento, caminho_foto_local])
+
+    with open(ARQUIVO_CSV, mode='w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(["Data_Registro", "ID", "Nome", "Evento", "Dispositivo", "Leitor", "Data_Evento", "Caminho_Foto"])
+        writer.writerows(registros_existentes)
+
+    print(f"[+] BIO: Evento {id_usuario} - {nome}")
+    atualizar_relatorio_html()
+
+    # Notifica a UI
+    if queue_ui:
+        queue_ui.put({
+            "type": "BIO_EVENT",
+            "data": {
+                "id_usuario": id_usuario,
+                "nome": nome,
+                "evento": evento,
+                "dispositivo": dispositivo,
+                "leitor": leitor,
+                "data_evento": data_evento,
+                "foto": base64_foto
+            }
+        })
+
+def atualizar_relatorio_html():
+    """Gera ou atualiza o dashboard estático externo em HTML."""
+    registros = []
+    if os.path.exists(ARQUIVO_CSV):
+        with open(ARQUIVO_CSV, mode='r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            registros = list(reader)
+            registros.reverse()
+
+    html_content = f"""<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Relatório de Monitoramento Biométrico</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 text-gray-100 font-sans min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        <header class="mb-8 border-b border-gray-800 pb-4">
+            <h1 class="text-3xl font-bold text-teal-400">Relatório de Monitoramento Biométrico</h1>
+            <p class="text-gray-400">Última atualização: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}</p>
+        </header>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+    """
+    for r in registros:
+        caminho_foto = r.get('Caminho_Foto', '')
+        img_tag_src = f"fotos/{os.path.basename(caminho_foto)}" if caminho_foto else "https://via.placeholder.com/150"
+        disp_html = f'<p class="text-sm text-gray-300 font-medium mt-0.5">🖥️ {r.get("Dispositivo", "")}</p>'
+        leitor_html = f'<p class="text-xs text-teal-400 font-semibold mt-0.5">Leitor: {r.get("Leitor", "")}</p>'
+        evento_html = f'<p class="text-sm text-yellow-400 font-medium mt-1">{r.get("Evento", "")}</p>'
+        html_content += f"""
+            <div class="bg-gray-800 rounded-xl overflow-hidden shadow-lg border border-gray-700 p-4">
+                <div class="flex justify-center mb-4">
+                    <img class="h-44 object-contain rounded-lg" src="{img_tag_src}" onerror="this.src='https://via.placeholder.com/150'">
+                </div>
+                <span class="inline-block px-2 py-1 text-xs font-semibold rounded-full bg-teal-900 text-teal-300 mb-2">ID: {r['ID']}</span>
+                <h3 class="text-lg font-bold text-white truncate">{r['Nome']}</h3>
+                {evento_html} {leitor_html} {disp_html}
+                <div class="mt-4 pt-3 border-t border-gray-700 text-xs text-gray-400">
+                    <div><strong>Evento em:</strong> {r['Data_Evento']}</div>
+                </div>
+            </div>
+        """
+    html_content += "</div></div></body></html>"
+    with open(ARQUIVO_HTML, "w", encoding="utf-8") as f:
+        f.write(html_content)
+
+class BioMonitorThread(threading.Thread):
+    def __init__(self, queue_ui):
+        super().__init__(daemon=True)
+        self.queue_ui = queue_ui
+        self.rodando = True
+        self.browser = None
+        self.context = None
+        self.page = None
+
+    def run(self):
+        with sync_playwright() as p:
+            try:
+                # Tenta iniciar navegador
+                try:
+                    self.browser = p.chromium.launch(headless=True)
+                except:
+                    try:
+                        self.browser = p.chromium.launch(headless=True, channel="chrome")
+                    except:
+                        self.browser = p.chromium.launch(headless=True, channel="msedge")
+
+                self.context = self.browser.new_context()
+                self.page = self.context.new_page()
+
+                print(f"[*] BIO: Acessando {URL_LOGIN_BIO}...")
+                self.page.goto(URL_LOGIN_BIO)
+
+                self.page.wait_for_selector("#username", timeout=15000)
+                self.page.wait_for_selector("#password", timeout=15000)
+
+                print("[*] BIO: Efetuando login...")
+                self.page.fill("#username", USUARIO_BIO)
+                self.page.fill("#password", SENHA_BIO)
+
+                btn_login = self.page.locator("input[type='submit'], button, a.login-btn")
+                btn_login.first.click()
+
+                self.page.wait_for_url(re.compile(r"(main|dashboard)\.do"), timeout=30000)
+                print("[+] BIO: Login efetuado com sucesso!")
+
+                self.loop_monitoramento()
+
+            except Exception as e:
+                print(f"[-] BIO: Erro no monitoramento biométrico: {e}")
+            finally:
+                if self.browser:
+                    self.browser.close()
+
+    def loop_monitoramento(self):
+        ultimos_eventos_processados = set()
+        eventos_com_foto_processados = set()
+
+        while self.rodando:
+            try:
+                # Varredura em frames e na página principal
+                fontes = [self.page] + (self.page.frames if self.page else [])
+
+                for fonte in fontes:
+                    try:
+                        # Filtro de URL para evitar processar frames irrelevantes
+                        if "192.168.7.9" not in fonte.url and "about:blank" not in fonte.url:
+                            continue
+
+                        # --- ORIGEM 1: VARREDURA DIRETA NA TABELA REAL ---
+                        linhas_tabela = self.extrair_linhas_tabela_real(fonte)
+                        for linha in linhas_tabela:
+                            id_usuario, nome_usuario = self.parse_pessoa(linha["pessoa"])
+                            evento = linha["evento"]
+                            dispositivo = linha["dispositivo"]
+                            leitor = linha["leitor"]
+                            data_evento = normalizar_data(linha["horario"])
+
+                            # Sanitização
+                            if "Verificação de abertura normal" in evento:
+                                evento = evento.replace("Verificação de abertura normal", "").strip()
+                            if dispositivo == "Geral": dispositivo = ""
+
+                            chave_evento = f"{id_usuario}_{data_evento}"
+                            if chave_evento not in ultimos_eventos_processados:
+                                registrar_evento(id_usuario, nome_usuario, evento, dispositivo, leitor, data_evento, "", self.queue_ui)
+                                ultimos_eventos_processados.add(chave_evento)
+
+                        # --- ORIGEM 2: CAPTURA DO POP-UP ---
+                        elementos_alvo = fonte.locator("div[style*='text-align: center']").all()
+                        for el in elementos_alvo:
+                            html_interno = el.inner_html()
+                            if "<p>" in html_interno and "</p>" in html_interno:
+                                dados = self.extrair_dados_notificacao(html_interno)
+                                if dados:
+                                    id_usuario, nome_usuario, evento, dispositivo, data_evento_raw, base64_foto, leitor_popup = dados
+                                    data_evento = normalizar_data(data_evento_raw)
+
+                                    if "Verificação de abertura normal" in evento:
+                                        evento = evento.replace("Verificação de abertura normal", "").strip()
+                                    if dispositivo == "Geral": dispositivo = ""
+
+                                    chave_evento = f"{id_usuario}_{data_evento}"
+                                    if base64_foto and chave_evento not in eventos_com_foto_processados:
+                                        registrar_evento(id_usuario, nome_usuario, evento, dispositivo, leitor_popup, data_evento, base64_foto, self.queue_ui)
+                                        ultimos_eventos_processados.add(chave_evento)
+                                        eventos_com_foto_processados.add(chave_evento)
+                    except:
+                        continue
+
+                if len(ultimos_eventos_processados) > 1000:
+                    ultimos_eventos_processados.clear()
+                    eventos_com_foto_processados.clear()
+
+                self.page.wait_for_timeout(250)
+            except Exception as e:
+                print(f"[-] BIO: Erro no loop: {e}")
+                time.sleep(2)
+
+    def parse_pessoa(self, pessoa_texto):
+        match = re.match(r"(\d+)\((.+)\)", pessoa_texto)
+        if match:
+            return match.group(1), match.group(2)
+        return "Desconhecido", pessoa_texto
+
+    def extrair_linhas_tabela_real(self, frame):
+        try:
+            js_tabela = """
+            () => {
+                const resultados = [];
+                const trs = document.querySelectorAll('tr');
+                for (const tr of trs) {
+                    const tds = tr.querySelectorAll('td');
+                    if (tds.length >= 8) {
+                        const horario = tds[0].innerText ? tds[0].innerText.trim() : tds[0].textContent.trim();
+                        if (/^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}$/.test(horario)) {
+                            resultados.push({
+                                horario: horario,
+                                dispositivo: tds[2].innerText ? tds[2].innerText.trim() : tds[2].textContent.trim(),
+                                evento: tds[4].innerText ? tds[4].innerText.trim() : tds[4].textContent.trim(),
+                                pessoa: tds[6].innerText ? tds[6].innerText.trim() : tds[6].textContent.trim(),
+                                leitor: tds[7].innerText ? tds[7].innerText.trim() : tds[7].textContent.trim()
+                            });
+                        }
+                    }
+                }
+                return resultados;
+            }
+            """
+            return frame.evaluate(js_tabela)
+        except:
+            return []
+
+    def extrair_dados_notificacao(self, html_interno):
+        soup = BeautifulSoup(html_interno, 'html.parser')
+        img_tag = soup.find('img')
+        base64_foto = ""
+        if img_tag and img_tag.get('src') and "base64," in img_tag.get('src'):
+            base64_foto = img_tag.get('src')
+
+        p_tags = soup.find_all('p')
+        if len(p_tags) >= 3:
+            identificacao = p_tags[0].get_text(strip=True)
+            evento = p_tags[1].get_text(strip=True)
+            data_evento = p_tags[2].get_text(strip=True)
+
+            id_usuario, nome_usuario = self.parse_pessoa(identificacao)
+            dispositivo = p_tags[3].get_text(strip=True) if len(p_tags) >= 4 else ""
+            leitor = p_tags[4].get_text(strip=True) if len(p_tags) >= 5 else ""
+            return id_usuario, nome_usuario, evento, dispositivo, data_evento, base64_foto, leitor
+        return None
+
+    def parar(self):
+        self.rodando = False
 
 def carregar_dados_sistema():
     """Carrega as configurações do sistema via console antes da interface iniciar."""
@@ -536,6 +859,8 @@ class CentralMonitoramento(ctk.CTk):
         self.virtual_grid = {}
         self.offset_x = 0
         self.offset_y = 0
+        self.eventos_bio_cards = {}
+        self.queue_bio = queue.Queue()
 
         if dados_iniciais:
             self.dados_cameras = dados_iniciais.get("config", {})
@@ -628,6 +953,8 @@ class CentralMonitoramento(ctk.CTk):
         self.grid_columnconfigure(0, weight=0) # Sidebar fixa
         self.grid_columnconfigure(1, weight=0) # Botão toggle fixo
         self.grid_columnconfigure(2, weight=1) # Main expande
+        self.grid_columnconfigure(3, weight=0) # Botão toggle direita
+        self.grid_columnconfigure(4, weight=0) # Sidebar direita
         self.grid_rowconfigure(0, weight=1)
 
         # 1. Sidebar (Coluna 0)
@@ -728,6 +1055,49 @@ class CentralMonitoramento(ctk.CTk):
         self.main_frame = ctk.CTkFrame(self, fg_color=self.BG_MAIN, corner_radius=0)
         self.main_frame.grid(row=0, column=2, sticky="nsew")
 
+        # 4. Container Toggle Sidebar Direita (Coluna 3)
+        self.container_toggle_right = ctk.CTkFrame(self, fg_color=self.BG_PANEL, corner_radius=0)
+        self.container_toggle_right.grid(row=0, column=3, sticky="ns")
+
+        self.lbl_bio_vertical = ctk.CTkLabel(
+            self.container_toggle_right,
+            text="B\nI\nO\nM\nE\nT\nR\nI\nA",
+            font=("Roboto", 11, "bold"),
+            text_color=self.TEXT_S
+        )
+        self.lbl_bio_vertical.pack(side="right", padx=(0, 2))
+
+        self.btn_toggle_sidebar_right = ctk.CTkButton(
+            self.container_toggle_right,
+            text="▶",
+            width=40,
+            corner_radius=0,
+            font=("Roboto", 24, "bold"),
+            fg_color=self.BG_PANEL,
+            hover_color=self.ACCENT_WINE,
+            text_color=self.ACCENT_RED,
+            command=self.toggle_sidebar_right
+        )
+        self.btn_toggle_sidebar_right.pack(side="left", fill="y")
+
+        # 5. Sidebar Direita (Coluna 4)
+        self.sidebar_right = ctk.CTkFrame(self, width=400, corner_radius=0, fg_color=self.BG_SIDEBAR)
+        self.sidebar_right.grid(row=0, column=4, sticky="nsew")
+        self.sidebar_right_visible = True
+
+        # Título da Sidebar Direita
+        self.header_bio = ctk.CTkFrame(self.sidebar_right, fg_color=self.BG_PANEL, height=60, corner_radius=0)
+        self.header_bio.pack(fill="x")
+        self.header_bio.pack_propagate(False)
+
+        ctk.CTkLabel(self.header_bio, text="EVENTOS BIOMÉTRICOS", font=("Roboto", 16, "bold"), text_color="#14b8a6").pack(pady=(10,0))
+        self.lbl_total_bio = ctk.CTkLabel(self.header_bio, text="0 total", font=("Roboto", 10), text_color=self.TEXT_S)
+        self.lbl_total_bio.pack()
+
+        # Lista de Eventos
+        self.scroll_eventos = ctk.CTkScrollableFrame(self.sidebar_right, fg_color="#0b0f19")
+        self.scroll_eventos.pack(expand=True, fill="both", padx=5, pady=5)
+
         self.criar_interface_grid()
 
         print("SISTEMA: Atualizando listas da UI...")
@@ -747,6 +1117,7 @@ class CentralMonitoramento(ctk.CTk):
         # Delay inicial: A interface carrega primeiro, as câmeras conectam depois
         # Reduzido para 300ms para uma experiência mais "fluida"
         self.after(300, self._iniciar_sistema_conexoes)
+        self.after(500, self._iniciar_monitoramento_bio)
         print("SISTEMA: Pronto.")
         
         def safe_zoom():
@@ -768,6 +1139,106 @@ class CentralMonitoramento(ctk.CTk):
         self._window_scaling = self._get_window_scaling()
         self._loop_counter = 0
         self.loop_exibicao()
+
+    def _iniciar_monitoramento_bio(self):
+        print("SISTEMA: Iniciando monitoramento biométrico...")
+        self.bio_thread = BioMonitorThread(self.queue_bio)
+        self.bio_thread.start()
+
+    def _processar_queue_bio(self):
+        """Processa eventos biométricos vindos da thread de monitoramento."""
+        try:
+            while not self.queue_bio.empty():
+                msg = self.queue_bio.get_nowait()
+                if msg.get("type") == "BIO_EVENT":
+                    self.adicionar_card_evento(msg["data"])
+        except:
+            pass
+
+    def adicionar_card_evento(self, dados):
+        id_reg = f"{dados['id_usuario']}_{dados['data_evento'].replace(':', '_')}"
+
+        if id_reg in self.eventos_bio_cards:
+            existente = self.eventos_bio_cards[id_reg]
+            # Se já tem foto ou a nova não tem foto, ignora update
+            if existente.get('tem_foto') or not dados.get('foto'):
+                return
+            # Remove o antigo para reinserir no topo com foto
+            existente['frame'].destroy()
+            del self.eventos_bio_cards[id_reg]
+
+        # Card de evento (Baseado no estilo do script original)
+        card = ctk.CTkFrame(self.scroll_eventos, fg_color="#1f2937", border_width=1, border_color="#374151")
+        # Inserir no topo: precisamos gerenciar a ordem no scrollable frame.
+        # ctk.CTkScrollableFrame não tem insert(0), então usaremos pack_forget/pack em todos ou apenas pack e aceitar que novos ficam embaixo?
+        # O original injetava no topo. Vamos tentar pack(side="top", before=...) se possível ou apenas pack e depois pack_forget em todos e repack.
+        # Simplificação: pack normal (fica embaixo), mas o usuário provavelmente quer os novos em cima.
+        # Para native CTk, a forma mais fácil de por no topo é não usar pack e sim gerenciar manualmente ou repack.
+        # Vamos fazer um repack rápido se houver poucos cards.
+
+        filhos = self.scroll_eventos.winfo_children()
+        for f in filhos: f.pack_forget()
+
+        card.pack(fill="x", pady=5, padx=5)
+        for f in filhos: f.pack(fill="x", pady=5, padx=5)
+
+        # Borda colorida à esquerda
+        borda_cor = "#14b8a6" if dados.get("foto") else "#f59e0b"
+        borda_l = ctk.CTkFrame(card, width=4, fg_color=borda_cor)
+        borda_l.pack(side="left", fill="y")
+
+        inner = ctk.CTkFrame(card, fg_color="transparent")
+        inner.pack(side="left", fill="both", expand=True, padx=10, pady=10)
+
+        # Foto e Info
+        header_f = ctk.CTkFrame(inner, fg_color="transparent")
+        header_f.pack(fill="x")
+
+        tem_foto = False
+        if dados.get("foto"):
+            try:
+                img_data = base64.b64decode(dados["foto"].split(",")[1] if "," in dados["foto"] else dados["foto"])
+                img_pil = Image.open(io.BytesIO(img_data))
+                img_ctk = ctk.CTkImage(img_pil, size=(50, 50))
+                lbl_img = ctk.CTkLabel(header_f, image=img_ctk, text="", width=50, height=50)
+                lbl_img.pack(side="left", padx=(0, 10))
+                tem_foto = True
+            except:
+                ctk.CTkLabel(header_f, text="👤", font=("Roboto", 24)).pack(side="left", padx=(0, 10))
+        else:
+            ctk.CTkLabel(header_f, text="👤", font=("Roboto", 24)).pack(side="left", padx=(0, 10))
+
+        info_f = ctk.CTkFrame(header_f, fg_color="transparent")
+        info_f.pack(side="left", fill="both", expand=True)
+
+        ctk.CTkLabel(info_f, text=f"ID: {dados['id_usuario']}", font=("Roboto", 10, "bold"), text_color="#2dd4bf",
+                     fg_color="#1a2e2a", corner_radius=3).pack(anchor="w")
+        ctk.CTkLabel(info_f, text=dados["nome"], font=("Roboto", 12, "bold"), text_color="white").pack(anchor="w")
+
+        # Data/Hora
+        ctk.CTkLabel(inner, text=f"🕒 {dados['data_evento']}", font=("Roboto", 10, "bold"), text_color="#f59e0b").pack(anchor="e")
+
+        # Evento / Leitor / Dispositivo
+        if dados.get("leitor"):
+            ctk.CTkLabel(inner, text=f"📍 {dados['leitor']}", font=("Roboto", 10, "bold"), text_color="#2dd4bf").pack(anchor="w")
+        if dados.get("evento"):
+            ctk.CTkLabel(inner, text=dados["evento"], font=("Roboto", 10), text_color="#facc15").pack(anchor="w")
+        if dados.get("dispositivo"):
+            ctk.CTkLabel(inner, text=f"🖥️ {dados['dispositivo']}", font=("Roboto", 10), text_color="#cbd5e1").pack(anchor="w")
+
+        self.eventos_bio_cards[id_reg] = {'frame': card, 'tem_foto': tem_foto}
+
+        # Limite de 50 cards
+        while len(self.scroll_eventos.winfo_children()) > 50:
+            last = self.scroll_eventos.winfo_children()[-1]
+            # Encontra a chave do card a ser deletado
+            for k, v in list(self.eventos_bio_cards.items()):
+                if v['frame'] == last:
+                    del self.eventos_bio_cards[k]
+                    break
+            last.destroy()
+
+        self.lbl_total_bio.configure(text=f"{len(self.eventos_bio_cards)} total")
 
     def _iniciar_sistema_conexoes(self):
         """Inicia o despachante de conexões sequenciais."""
@@ -840,6 +1311,16 @@ class CentralMonitoramento(ctk.CTk):
             self.sidebar.grid(row=0, column=0, sticky="nsew")
             self.btn_toggle_sidebar.configure(text="◀")
             self.sidebar_visible = True
+
+    def toggle_sidebar_right(self):
+        if self.sidebar_right_visible:
+            self.sidebar_right.grid_forget()
+            self.btn_toggle_sidebar_right.configure(text="◀")
+            self.sidebar_right_visible = False
+        else:
+            self.sidebar_right.grid(row=0, column=4, sticky="nsew")
+            self.btn_toggle_sidebar_right.configure(text="▶")
+            self.sidebar_right_visible = True
 
     # --- LÓGICA PTZ ---
     def ao_scroll_mouse(self, event):
@@ -1025,8 +1506,10 @@ class CentralMonitoramento(ctk.CTk):
         
         self.sidebar.grid_forget()
         self.container_toggle.grid_forget()
+        self.sidebar_right.grid_forget()
+        self.container_toggle_right.grid_forget()
 
-        self.main_frame.grid_configure(column=0, columnspan=3)
+        self.main_frame.grid_configure(column=0, columnspan=5)
 
         self.grid_frame.pack_forget()
         self.grid_frame.pack(expand=True, fill="both", padx=0, pady=0)
@@ -1056,6 +1539,10 @@ class CentralMonitoramento(ctk.CTk):
         
         self.container_toggle.grid(row=0, column=1, sticky="ns")
         self.main_frame.grid_configure(column=2, columnspan=1)
+
+        self.container_toggle_right.grid(row=0, column=3, sticky="ns")
+        if self.sidebar_right_visible:
+            self.sidebar_right.grid(row=0, column=4, sticky="nsew")
         
         self.grid_frame.pack_forget()
         padx_grid = 0 if self.slot_maximized is not None else 0
@@ -1103,9 +1590,14 @@ class CentralMonitoramento(ctk.CTk):
 
             # Re-grid Main Frame
             if self.em_tela_cheia:
-                self.main_frame.grid_configure(row=0, column=0, columnspan=3, sticky="nsew")
+                self.main_frame.grid_configure(row=0, column=0, columnspan=5, sticky="nsew")
             else:
                 self.main_frame.grid_configure(row=0, column=2, sticky="nsew")
+
+            # Re-grid Right Sidebar
+            self.container_toggle_right.grid(row=0, column=3, sticky="ns")
+            if getattr(self, 'sidebar_right_visible', True):
+                self.sidebar_right.grid(row=0, column=4, sticky="nsew")
 
             self.update_idletasks()
         except Exception as e:
@@ -1147,6 +1639,10 @@ class CentralMonitoramento(ctk.CTk):
         if self.video_writer_tudo:
             self.video_writer_tudo.release()
             self.video_writer_tudo = None
+
+        # Para monitoramento biométrico
+        if hasattr(self, 'bio_thread'):
+            self.bio_thread.parar()
 
         try:
             if not self.em_tela_cheia:
@@ -2122,6 +2618,7 @@ class CentralMonitoramento(ctk.CTk):
 
             # Atualiza botões de controle periodicamente para garantir responsividade e sincronia
             self.atualizar_botoes_controle()
+            self._processar_queue_bio()
 
             # Processa novas conexões
             while not self.fila_conexoes.empty():
