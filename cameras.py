@@ -1,13 +1,7 @@
 import cv2
 import numpy as np
-try:
-    import mss
-    import mss.tools
-    HAS_MSS = True
-except ImportError:
-    HAS_MSS = False
 import customtkinter as ctk
-from PIL import Image, ImageTk, ImageDraw, ImageGrab
+from PIL import Image, ImageTk, ImageDraw, ImageFont
 import json
 import os
 import re
@@ -23,12 +17,6 @@ import requests
 from requests.auth import HTTPDigestAuth
 import subprocess
 import platform
-if platform.system() == "Windows":
-    try:
-        import ctypes
-        from ctypes import wintypes
-    except ImportError:
-        pass
 from datetime import datetime
 from tkinter import filedialog
 from bs4 import BeautifulSoup
@@ -928,7 +916,11 @@ class CentralMonitoramento(ctk.CTk):
         self.caminho_video_tudo = None
         self.ultimo_frame_tudo_tempo = 0
         self.fps_tudo = 10
-        self.sct = mss.mss() if HAS_MSS else None
+
+        # Buffer de eventos para gravação total
+        self.bio_events_buffer = collections.deque(maxlen=10)
+        self._painel_bio_cache = None
+        self._painel_bio_dirty = True
 
         # Grid Virtual e Viewport
         self.virtual_grid = {}
@@ -1256,6 +1248,8 @@ class CentralMonitoramento(ctk.CTk):
                 msg = self.queue_bio.get_nowait()
                 if msg.get("type") == "BIO_EVENT":
                     self.adicionar_card_evento(msg["data"])
+                    self.bio_events_buffer.appendleft(msg["data"])
+                    self._painel_bio_dirty = True
                 elif msg.get("type") == "BIO_STOPPED":
                     self.btn_iniciar_bio.configure(state="normal", text="Iniciar", fg_color=self.GRAY_DARK)
                     self.btn_parar_bio.configure(state="disabled", text="Parar")
@@ -2271,6 +2265,95 @@ class CentralMonitoramento(ctk.CTk):
             self.atualizar_botoes_controle()
             self.abrir_modal_alerta("Sucesso", "Gravação finalizada e salva em Downloads.", show_open_folder=True)
 
+    def renderizar_painel_biometria(self, largura, altura):
+        """Renderiza uma imagem PIL com os logs biométricos recentes."""
+        if not self._painel_bio_dirty and self._painel_bio_cache:
+            return self._painel_bio_cache
+
+        img = Image.new('RGB', (largura, altura), self.BG_SIDEBAR)
+        draw = ImageDraw.Draw(img)
+
+        try:
+            f_bold = ImageFont.truetype("arialbd.ttf", 16)
+            f_reg = ImageFont.truetype("arial.ttf", 12)
+        except:
+            f_bold = ImageFont.load_default()
+            f_reg = ImageFont.load_default()
+
+        # Título
+        draw.rectangle([0, 0, largura, 40], fill=self.BG_PANEL)
+        draw.text((largura//2, 20), "REGISTROS BIOMÉTRICOS", fill=self.ACCENT_RED, font=f_bold, anchor="mm")
+
+        y_cursor = 50
+        for evento in self.bio_events_buffer:
+            if y_cursor + 100 > altura: break
+
+            # Card background
+            draw.rectangle([10, y_cursor, largura-10, y_cursor+90], fill="#1a1a1a", outline="#333333")
+            draw.rectangle([10, y_cursor, 13, y_cursor+90], fill=self.ACCENT_RED)
+
+            # Foto (ou placeholder)
+            x_txt = 20
+            if evento.get("foto"):
+                try:
+                    img_data = base64.b64decode(evento["foto"].split(",")[1] if "," in evento["foto"] else evento["foto"])
+                    foto_pil = Image.open(io.BytesIO(img_data)).resize((70, 70))
+                    img.paste(foto_pil, (20, y_cursor+10))
+                    x_txt = 100
+                except: pass
+
+            # Texto do evento
+            draw.text((x_txt, y_cursor+10), evento["nome"].upper()[:30], fill="white", font=f_bold)
+            draw.text((x_txt, y_cursor+30), f"ID: {evento['id_usuario']}", fill=self.ACCENT_RED, font=f_reg)
+            draw.text((x_txt, y_cursor+45), f"🕒 {evento['data_evento']}", fill="#f59e0b", font=f_reg)
+            draw.text((x_txt, y_cursor+60), f"📍 {evento.get('leitor', '')[:25]}", fill="white", font=f_reg)
+
+            y_cursor += 100
+
+        self._painel_bio_cache = img
+        self._painel_bio_dirty = False
+        return img
+
+    def gerar_frame_mosaico_completo(self):
+        """Gera um mosaico manual das câmeras + painel de biometria."""
+        # Dimensões base: 1280x720 para o mosaico (ou o que for necessário)
+        # Vamos usar 4x5 cameras (ou 5x8) + painel lateral de 300px
+        cols, rows = self.grid_cols, self.grid_rows
+        slot_w, slot_h = 320, 240
+        bio_w = 300
+
+        mosaico_w = cols * slot_w
+        mosaico_h = rows * slot_h
+
+        total_w = mosaico_w + bio_w
+        total_h = mosaico_h
+
+        # Cria canvas
+        canvas = Image.new('RGB', (total_w, total_h), self.BG_MAIN)
+
+        # 1. Cola câmeras
+        for i in range(self.num_slots):
+            ip = self.grid_cameras[i]
+            r, c = i // cols, i % cols
+
+            handler = self.camera_handlers.get(ip)
+            if handler and handler != "CONECTANDO" and handler.frame_pil:
+                with handler.lock:
+                    cam_img = handler.frame_pil.resize((slot_w, slot_h), Image.NEAREST)
+                canvas.paste(cam_img, (c*slot_w, r*slot_h))
+            else:
+                # Slot vazio ou offline
+                draw = ImageDraw.Draw(canvas)
+                draw.rectangle([c*slot_w, r*slot_h, (c+1)*slot_w, (r+1)*slot_h], fill=self.BG_SIDEBAR, outline="black")
+                if ip and ip != "0.0.0.0":
+                    draw.text((c*slot_w + 10, r*slot_h + 10), f"OFFLINE\n{ip}", fill="gray")
+
+        # 2. Gera e cola painel de biometria
+        bio_panel = self.renderizar_painel_biometria(bio_w, total_h)
+        canvas.paste(bio_panel, (mosaico_w, 0))
+
+        return canvas
+
     def toggle_gravacao_tudo(self):
         if not self.gravando_tudo:
             # Iniciar Gravação Total
@@ -2930,102 +3013,28 @@ class CentralMonitoramento(ctk.CTk):
                     # print(f"Erro render slot {i}: {e}")
                     pass
 
-            # Lógica de Gravação Total (Captura da Janela)
+            # Lógica de Gravação Total (Mosaico Manual)
             if self.gravando_tudo:
                 agora_rec = time.time()
                 if agora_rec - self.ultimo_frame_tudo_tempo >= (1.0 / self.fps_tudo):
                     try:
-                        # Obtém coordenadas e dimensões da janela
-                        # Tkinter rootx/y pode ou não estar escalado dependendo do OS/DPI Settings
-                        rx, ry = self.winfo_rootx(), self.winfo_rooty()
-                        rw, rh = self.winfo_width(), self.winfo_height()
-
-                        # Usa o scaling detectado pelo CustomTkinter
-                        sc = self._window_scaling
-
-                        # No Windows, GetWindowRect é o método mais confiável para capturar a janela inteira
-                        # incluindo bordas e menus, e já retorna coordenadas físicas sem necessidade de scaling manual.
-                        if platform.system() == "Windows":
-                            try:
-                                hwnd = self.winfo_id()
-                                rect = wintypes.RECT()
-                                ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
-                                x, y = rect.left, rect.top
-                                w_box, h_box = rect.right - rect.left, rect.bottom - rect.top
-                            except:
-                                x, y = int(rx * sc), int(ry * sc)
-                                w_box, h_box = int(rw * sc), int(rh * sc)
-                        else:
-                            x, y = int(rx * sc), int(ry * sc)
-                            w_box, h_box = int(rw * sc), int(rh * sc)
-
-                        # Forçamos dimensões pares para compatibilidade com codecs
-                        w_box = w_box & ~1
-                        h_box = h_box & ~1
-
-                        # Se as dimensões forem inválidas ou o app estiver minimizado, pulamos a gravação
-                        # mas NÃO retornamos, para não quebrar o loop de exibição.
-                        if w_box < 200 or h_box < 200:
-                            raise ValueError("Janela muito pequena ou minimizada")
-
-                        if self.sct:
-                            # Captura a região da janela usando mss
-                            monitor = {"top": y, "left": x, "width": w_box, "height": h_box}
-                            sct_img = self.sct.grab(monitor)
-
-                            # Converte mss para numpy array (OpenCV format)
-                            # mss retorna BGRA, OpenCV usa BGR
-                            frame_bgr = np.array(sct_img)
-                            frame_bgr = cv2.cvtColor(frame_bgr, cv2.COLOR_BGRA2BGR)
-                        else:
-                            # Fallback para ImageGrab se mss não estiver disponível
-                            # Captura tela cheia e corta manualmente
-                            img_full = ImageGrab.grab(all_screens=True)
-                            tw, th = img_full.size
-
-                            x1 = max(0, min(tw-2, x))
-                            y1 = max(0, min(th-2, y))
-                            x2 = max(x1+2, min(tw, x + w_box))
-                            y2 = max(y1+2, min(th, y + h_box))
-
-                            cap_img = img_full.crop((x1, y1, x2, y2))
-                            frame_bgr = cv2.cvtColor(np.array(cap_img), cv2.COLOR_RGB2BGR)
-
-                        h_captured, w_captured = frame_bgr.shape[:2]
-
-                        # Se a captura for menor que o esperado (janela fora da tela),
-                        # colocamos em um fundo preto para evitar distorção (squashing).
-                        if w_captured != w_box or h_captured != h_box:
-                            canvas = np.zeros((h_box, w_box, 3), dtype=np.uint8)
-                            ch = min(h_box, h_captured)
-                            cw = min(w_box, w_captured)
-                            canvas[:ch, :cw] = frame_bgr[:ch, :cw]
-                            frame_bgr = canvas
-
+                        # Gera o frame manualmente (independente do estado da janela ou oclusão)
+                        cap_img = self.gerar_frame_mosaico_completo()
+                        frame_bgr = cv2.cvtColor(np.array(cap_img), cv2.COLOR_RGB2BGR)
                         h_final, w_final = frame_bgr.shape[:2]
 
                         # Inicializa VideoWriter se necessário
                         if self.video_writer_tudo is None:
                             print(f"GRAVAR TUDO: Iniciando {w_final}x{h_final} (Format: AVI/XVID)")
-                            # Tenta salvar um frame de debug para diagnóstico
-                            try:
-                                debug_path = self.caminho_video_tudo.replace(".avi", "_debug.png")
-                                cv2.imwrite(debug_path, frame_bgr)
-                            except: pass
-
                             fourcc = cv2.VideoWriter_fourcc(*'XVID')
                             self.video_writer_tudo = cv2.VideoWriter(self.caminho_video_tudo, fourcc, self.fps_tudo, (w_final, h_final))
                             self.tamanho_gravacao_tudo = (w_final, h_final)
-
-                        # Redimensiona se o tamanho mudou durante a gravação para manter consistência no vídeo
-                        if (w_final, h_final) != self.tamanho_gravacao_tudo:
-                            frame_bgr = cv2.resize(frame_bgr, self.tamanho_gravacao_tudo)
 
                         if self.video_writer_tudo is not None:
                             self.video_writer_tudo.write(frame_bgr)
                         self.ultimo_frame_tudo_tempo = agora_rec
                     except Exception as e:
-                        print(f"Erro na gravação total da janela: {e}")
+                        print(f"Erro na gravação total manual: {e}")
 
         except Exception as e:
             # print(f"Erro no loop de exibicao: {e}")
