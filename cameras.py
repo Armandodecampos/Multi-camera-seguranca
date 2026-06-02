@@ -12,6 +12,7 @@ import threading
 import time
 import socket
 import queue
+import collections
 import requests
 from requests.auth import HTTPDigestAuth
 import subprocess
@@ -34,6 +35,30 @@ ARQUIVO_HTML = os.path.join(DIRETORIO_SAIDA, "relatorio_visual.html")
 
 # Cria as pastas caso não existam
 os.makedirs(DIRETORIO_FOTOS, exist_ok=True)
+
+# Cache global para evitar leituras repetitivas do CSV
+CACHE_EVENTOS_BIO = {} # Formato: { "ID_DATA": {"tem_foto": bool, "leitor": str, "dispositivo": str} }
+
+def carregar_cache_bio():
+    """Carrega eventos existentes do CSV para o cache em memória."""
+    global CACHE_EVENTOS_BIO
+    if os.path.exists(ARQUIVO_CSV):
+        try:
+            with open(ARQUIVO_CSV, mode='r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    chave = f"{row['ID']}_{row['Data_Evento']}"
+                    CACHE_EVENTOS_BIO[chave] = {
+                        "tem_foto": bool(row.get("Caminho_Foto")),
+                        "leitor": row.get("Leitor", ""),
+                        "dispositivo": row.get("Dispositivo", "")
+                    }
+            print(f"[*] BIO: Cache carregado com {len(CACHE_EVENTOS_BIO)} eventos.")
+        except Exception as e:
+            print(f"[-] BIO: Erro ao carregar cache: {e}")
+
+# Inicializa o cache
+carregar_cache_bio()
 
 # Configuração de baixa latência para OpenCV/FFMPEG
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp;stimeout;3000000;buffer_size;2048000;analyzeduration;50000;probesize;50000;fflags;discardcorrupt;max_delay;500000;reorder_queue_size;16;rtsp_flags;prefer_tcp;reconnect;1;reconnect_streamed;1;reconnect_at_eof;1;allowed_media_types;video"
@@ -77,36 +102,58 @@ def salvar_foto_bio(base64_data, id_usuario, data_evento):
 
 def registrar_evento(id_usuario, nome, evento, dispositivo, leitor, data_evento, base64_foto, queue_ui):
     """Registra as informações capturadas e notifica a UI."""
+    global CACHE_EVENTOS_BIO
+
+    chave = f"{id_usuario}_{data_evento}"
+    evento_existente = CACHE_EVENTOS_BIO.get(chave)
+
+    # Se o evento já existe e não estamos adicionando uma foto nova ou dados novos, ignora
+    if evento_existente:
+        ja_tem_foto = evento_existente.get("tem_foto", False)
+        # Se já tem foto ou não veio foto nova, e leitor/dispositivo estão preenchidos, não precisa atualizar
+        if (ja_tem_foto or not base64_foto) and evento_existente.get("leitor") and evento_existente.get("dispositivo"):
+            return
+
     caminho_foto_local = ""
     if base64_foto:
         caminho_foto_local = salvar_foto_bio(base64_foto, id_usuario, data_evento)
 
     data_registro = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    registros_existentes = []
-    atualizado = False
-
-    if os.path.exists(ARQUIVO_CSV):
+    # Se é uma atualização (evento já existia no cache mas faltava algo)
+    if evento_existente:
+        registros_finais = []
         with open(ARQUIVO_CSV, mode='r', encoding='utf-8') as f:
             reader = csv.reader(f)
-            cabecalho = next(reader, None)
+            cabecalho = next(reader)
+            registros_finais.append(cabecalho)
             for row in reader:
-                if len(row) >= 8:
-                    if row[1] == id_usuario and row[6] == data_evento:
-                        if not row[7] and caminho_foto_local: row[7] = caminho_foto_local
-                        if not row[5] and leitor: row[5] = leitor
-                        if (not row[4] or row[4] == "Geral") and dispositivo and dispositivo != "Geral":
-                            row[4] = dispositivo
-                        atualizado = True
-                    registros_existentes.append(row)
+                if len(row) >= 8 and row[1] == id_usuario and row[6] == data_evento:
+                    if not row[7] and caminho_foto_local: row[7] = caminho_foto_local
+                    if not row[5] and leitor: row[5] = leitor
+                    if (not row[4] or row[4] == "Geral") and dispositivo and dispositivo != "Geral":
+                        row[4] = dispositivo
+                registros_finais.append(row)
 
-    if not atualizado:
-        registros_existentes.append([data_registro, id_usuario, nome, evento, dispositivo, leitor, data_evento, caminho_foto_local])
+        with open(ARQUIVO_CSV, mode='w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerows(registros_finais)
+    else:
+        # Novo evento: Apenas apenda ao CSV (Muito mais eficiente)
+        novo_registro = [data_registro, id_usuario, nome, evento, dispositivo, leitor, data_evento, caminho_foto_local]
+        arquivo_existe = os.path.exists(ARQUIVO_CSV)
+        with open(ARQUIVO_CSV, mode='a', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            if not arquivo_existe:
+                writer.writerow(["Data_Registro", "ID", "Nome", "Evento", "Dispositivo", "Leitor", "Data_Evento", "Caminho_Foto"])
+            writer.writerow(novo_registro)
 
-    with open(ARQUIVO_CSV, mode='w', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f)
-        writer.writerow(["Data_Registro", "ID", "Nome", "Evento", "Dispositivo", "Leitor", "Data_Evento", "Caminho_Foto"])
-        writer.writerows(registros_existentes)
+    # Atualiza o cache
+    CACHE_EVENTOS_BIO[chave] = {
+        "tem_foto": bool(caminho_foto_local) or (evento_existente.get("tem_foto") if evento_existente else False),
+        "leitor": leitor or (evento_existente.get("leitor") if evento_existente else ""),
+        "dispositivo": dispositivo or (evento_existente.get("dispositivo") if evento_existente else "")
+    }
 
     print(f"[+] BIO: Evento {id_usuario} - {nome}")
     atualizar_relatorio_html()
@@ -226,11 +273,23 @@ class BioMonitorThread(threading.Thread):
                     self.queue_ui.put({"type": "BIO_STOPPED"})
 
     def loop_monitoramento(self):
-        ultimos_eventos_processados = set()
-        eventos_com_foto_processados = set()
+        # Sliding window para evitar duplicados sem clear abrupto
+        ultimos_eventos_processados = collections.deque(maxlen=2000)
+        eventos_com_foto_processados = collections.deque(maxlen=2000)
 
         while self.rodando:
             try:
+                # Verifica se fomos deslogados (redirecionados para bioLogin.do)
+                if self.page and "bioLogin.do" in self.page.url and not self.page.url.endswith("bioLogin.do"):
+                    # Se estamos na URL de login mas não foi onde começamos, tentamos re-logar
+                    print("[!] BIO: Sessão expirada ou redirecionada. Tentando re-autenticar...")
+                    self.page.fill("#username", USUARIO_BIO)
+                    self.page.fill("#password", SENHA_BIO)
+                    btn_login = self.page.locator("input[type='submit'], button, a.login-btn")
+                    btn_login.first.click()
+                    self.page.wait_for_url(re.compile(r"(main|dashboard)\.do"), timeout=15000)
+                    print("[+] BIO: Re-autenticação bem-sucedida.")
+
                 # Varredura em frames e na página principal
                 fontes = [self.page] + (self.page.frames if self.page else [])
 
@@ -257,7 +316,7 @@ class BioMonitorThread(threading.Thread):
                             chave_evento = f"{id_usuario}_{data_evento}"
                             if chave_evento not in ultimos_eventos_processados:
                                 registrar_evento(id_usuario, nome_usuario, evento, dispositivo, leitor, data_evento, "", self.queue_ui)
-                                ultimos_eventos_processados.add(chave_evento)
+                                ultimos_eventos_processados.append(chave_evento)
 
                         # --- ORIGEM 2: CAPTURA DO POP-UP ---
                         elementos_alvo = fonte.locator("div[style*='text-align: center']").all()
@@ -276,19 +335,18 @@ class BioMonitorThread(threading.Thread):
                                     chave_evento = f"{id_usuario}_{data_evento}"
                                     if base64_foto and chave_evento not in eventos_com_foto_processados:
                                         registrar_evento(id_usuario, nome_usuario, evento, dispositivo, leitor_popup, data_evento, base64_foto, self.queue_ui)
-                                        ultimos_eventos_processados.add(chave_evento)
-                                        eventos_com_foto_processados.add(chave_evento)
-                    except:
-                        continue
-
-                if len(ultimos_eventos_processados) > 1000:
-                    ultimos_eventos_processados.clear()
-                    eventos_com_foto_processados.clear()
+                                        if chave_evento not in ultimos_eventos_processados:
+                                            ultimos_eventos_processados.append(chave_evento)
+                                        eventos_com_foto_processados.append(chave_evento)
+                    except Exception as e_fonte:
+                        # Log discreto para erros de frame
+                        pass
 
                 self.page.wait_for_timeout(250)
             except Exception as e:
-                print(f"[-] BIO: Erro no loop: {e}")
-                time.sleep(2)
+                print(f"[-] BIO: Erro no loop de monitoramento: {e}")
+                # Se o erro for de conexão do Playwright, pode ser necessário reiniciar o browser (futura melhoria)
+                time.sleep(5)
 
     def parse_pessoa(self, pessoa_texto):
         match = re.match(r"(\d+)\((.+)\)", pessoa_texto)
@@ -863,6 +921,7 @@ class CentralMonitoramento(ctk.CTk):
         self.offset_x = 0
         self.offset_y = 0
         self.eventos_bio_cards = {}
+        self.lista_cards_bio = [] # Rastreador de ordem para CTkScrollableFrame
         self.queue_bio = queue.Queue()
 
         if dados_iniciais:
@@ -1192,30 +1251,44 @@ class CentralMonitoramento(ctk.CTk):
     def adicionar_card_evento(self, dados):
         id_reg = f"{dados['id_usuario']}_{dados['data_evento'].replace(':', '_')}"
 
+        # Se o evento já existe
         if id_reg in self.eventos_bio_cards:
             existente = self.eventos_bio_cards[id_reg]
+            # Se o existente já tem foto, ou o novo não traz foto, não faz nada
             if existente.get('tem_foto') or not dados.get('foto'):
                 return
-            existente['frame'].destroy()
+            # Se o novo tem foto e o antigo não, remove o antigo para inserir o novo (atualizado) no topo
+            try:
+                frm = existente['frame']
+                if frm in self.lista_cards_bio:
+                    self.lista_cards_bio.remove(frm)
+                frm.destroy()
+            except: pass
             del self.eventos_bio_cards[id_reg]
 
-        # Card de evento (Mais justo possível)
+        # Card de evento
         card = ctk.CTkFrame(self.scroll_eventos, fg_color="#1a1a1a", border_width=1, border_color="#333333")
 
-        filhos = self.scroll_eventos.winfo_children()
-        for f in filhos: f.pack_forget()
+        # Insere no topo usando a lista de rastreamento
+        if self.lista_cards_bio:
+            try:
+                card.pack(fill="x", pady=2, padx=2, before=self.lista_cards_bio[0])
+            except:
+                card.pack(fill="x", pady=2, padx=2)
+        else:
+            card.pack(fill="x", pady=2, padx=2)
 
-        card.pack(fill="x", pady=2, padx=2)
-        for f in filhos[:49]:
-            f.pack(fill="x", pady=2, padx=2)
+        self.lista_cards_bio.insert(0, card)
 
-        if len(filhos) >= 50:
-            for f in filhos[49:]:
-                for k, v in list(self.eventos_bio_cards.items()):
-                    if v['frame'] == f:
-                        del self.eventos_bio_cards[k]
-                        break
-                f.destroy()
+        # Limita a 50 itens removendo o último (mais antigo)
+        if len(self.lista_cards_bio) > 50:
+            ultimo_card = self.lista_cards_bio.pop()
+            for k, v in list(self.eventos_bio_cards.items()):
+                if v['frame'] == ultimo_card:
+                    del self.eventos_bio_cards[k]
+                    break
+            try: ultimo_card.destroy()
+            except: pass
 
         # Borda colorida à esquerda (ACCENT_RED)
         borda_cor = self.ACCENT_RED if dados.get("foto") else "#f59e0b"
