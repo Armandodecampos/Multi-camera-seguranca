@@ -2922,22 +2922,41 @@ class CentralMonitoramento(ctk.CTk):
                 agora_rec = time.time()
                 if agora_rec - self.ultimo_frame_tudo_tempo >= (1.0 / self.fps_tudo):
                     try:
-                        scaling = self._get_window_scaling()
                         # Obtém coordenadas e dimensões da janela
-                        x = int(self.winfo_rootx() * scaling)
-                        y = int(self.winfo_rooty() * scaling)
-                        w = int(self.winfo_width() * scaling)
-                        h = int(self.winfo_height() * scaling)
+                        # Tkinter rootx/y pode ou não estar escalado dependendo do OS/DPI Settings
+                        rx, ry = self.winfo_rootx(), self.winfo_rooty()
+                        rw, rh = self.winfo_width(), self.winfo_height()
 
-                        # Captura o frame da janela inteira (incluindo sidebars e controles)
-                        cap_img = ImageGrab.grab(bbox=(x, y, x + w, y + h))
+                        # Usa o scaling detectado pelo CustomTkinter
+                        sc = self._window_scaling
+                        x, y = int(rx * sc), int(ry * sc)
+                        w, h = int(rw * sc), int(rh * sc)
+
+                        # Garante dimensões pares (requisito de muitos codecs)
+                        w = w if w % 2 == 0 else w - 1
+                        h = h if h % 2 == 0 else h - 1
+
+                        # Captura tela cheia e corta (mais robusto que bbox direto em alguns sistemas)
+                        img_full = ImageGrab.grab(all_screens=True)
+                        tw, th = img_full.size
+
+                        # Ajusta crop para limites reais da captura
+                        x1 = max(0, min(tw-2, x))
+                        y1 = max(0, min(th-2, y))
+                        x2 = max(x1+2, min(tw, x1 + w))
+                        y2 = max(y1+2, min(th, y1 + h))
+
+                        cap_img = img_full.crop((x1, y1, x2, y2))
+                        w_final, h_final = cap_img.size
+
                         frame_bgr = cv2.cvtColor(np.array(cap_img), cv2.COLOR_RGB2BGR)
 
                         # Inicializa VideoWriter se necessário
                         if self.video_writer_tudo is None:
+                            print(f"GRAVAR TUDO: Iniciando {w_final}x{h_final} (Window: {rx},{ry} {rw}x{rh}, Scaling: {sc})")
                             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-                            self.video_writer_tudo = cv2.VideoWriter(self.caminho_video_tudo, fourcc, self.fps_tudo, (w, h))
-                            self.tamanho_gravacao_tudo = (w, h)
+                            self.video_writer_tudo = cv2.VideoWriter(self.caminho_video_tudo, fourcc, self.fps_tudo, (w_final, h_final))
+                            self.tamanho_gravacao_tudo = (w_final, h_final)
 
                         # Redimensiona se o tamanho mudou durante a gravação para manter consistência no vídeo
                         if (w, h) != self.tamanho_gravacao_tudo:
