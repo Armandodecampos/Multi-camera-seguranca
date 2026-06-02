@@ -1194,47 +1194,38 @@ class CentralMonitoramento(ctk.CTk):
 
         if id_reg in self.eventos_bio_cards:
             existente = self.eventos_bio_cards[id_reg]
-            # Se já tem foto ou a nova não tem foto, ignora update
             if existente.get('tem_foto') or not dados.get('foto'):
                 return
-            # Se precisamos atualizar para adicionar a foto, removemos o card sem foto
             existente['frame'].destroy()
             del self.eventos_bio_cards[id_reg]
 
-        # Card de evento (Baseado no estilo do script original)
-        card = ctk.CTkFrame(self.scroll_eventos, fg_color="#1f2937", border_width=1, border_color="#374151")
-
-        # Otimização: Inserir no topo sem repack total se possível.
-        # Infelizmente ctk.CTkScrollableFrame usa uma estrutura interna complexa.
-        # O repack total de até 50 widgets é rápido o suficiente, mas vamos manter o limite sob controle.
+        # Card de evento (Mais justo possível)
+        card = ctk.CTkFrame(self.scroll_eventos, fg_color="#1a1a1a", border_width=1, border_color="#333333")
 
         filhos = self.scroll_eventos.winfo_children()
         for f in filhos: f.pack_forget()
 
-        card.pack(fill="x", pady=5, padx=5)
-        # Repack dos antigos abaixo do novo
-        for f in filhos[:49]: # Garante limite de 50 no repack
-            f.pack(fill="x", pady=5, padx=5)
+        card.pack(fill="x", pady=2, padx=2)
+        for f in filhos[:49]:
+            f.pack(fill="x", pady=2, padx=2)
 
-        # Destrói o 51º se houver
         if len(filhos) >= 50:
             for f in filhos[49:]:
-                # Encontra a chave do card a ser deletado da cache
                 for k, v in list(self.eventos_bio_cards.items()):
                     if v['frame'] == f:
                         del self.eventos_bio_cards[k]
                         break
                 f.destroy()
 
-        # Borda colorida à esquerda
+        # Borda colorida à esquerda (ACCENT_RED)
         borda_cor = self.ACCENT_RED if dados.get("foto") else "#f59e0b"
-        borda_l = ctk.CTkFrame(card, width=4, fg_color=borda_cor)
+        borda_l = ctk.CTkFrame(card, width=3, fg_color=borda_cor)
         borda_l.pack(side="left", fill="y")
 
         inner = ctk.CTkFrame(card, fg_color="transparent")
-        inner.pack(side="left", fill="both", expand=True, padx=10, pady=10)
+        inner.pack(side="left", fill="both", expand=True, padx=4, pady=4)
 
-        # Foto e Info
+        # Foto e Info (Foto 2x maior: 100x100)
         header_f = ctk.CTkFrame(inner, fg_color="transparent")
         header_f.pack(fill="x")
 
@@ -1243,50 +1234,54 @@ class CentralMonitoramento(ctk.CTk):
             try:
                 img_data = base64.b64decode(dados["foto"].split(",")[1] if "," in dados["foto"] else dados["foto"])
                 img_pil = Image.open(io.BytesIO(img_data))
-                img_ctk = ctk.CTkImage(img_pil, size=(50, 50))
-                lbl_img = ctk.CTkLabel(header_f, image=img_ctk, text="", width=50, height=50)
-                lbl_img.pack(side="left", padx=(0, 10))
+                img_ctk = ctk.CTkImage(img_pil, size=(100, 100))
+                lbl_img = ctk.CTkLabel(header_f, image=img_ctk, text="", width=100, height=100)
+                lbl_img.pack(side="left", padx=(0, 6))
                 tem_foto = True
             except:
-                ctk.CTkLabel(header_f, text="👤", font=("Roboto", 24)).pack(side="left", padx=(0, 10))
+                ctk.CTkLabel(header_f, text="👤", font=("Roboto", 40)).pack(side="left", padx=(0, 6))
         else:
-            ctk.CTkLabel(header_f, text="👤", font=("Roboto", 24)).pack(side="left", padx=(0, 10))
+            ctk.CTkLabel(header_f, text="👤", font=("Roboto", 40)).pack(side="left", padx=(0, 6))
 
         info_f = ctk.CTkFrame(header_f, fg_color="transparent")
         info_f.pack(side="left", fill="both", expand=True)
 
-        ctk.CTkLabel(info_f, text=f"ID: {dados['id_usuario']}", font=("Roboto", 10, "bold"), text_color=self.ACCENT_RED,
-                     fg_color="#1a1a1a", corner_radius=3).pack(anchor="w")
+        ctk.CTkLabel(info_f, text=f"ID: {dados['id_usuario']}", font=("Roboto", 10, "bold"),
+                     text_color=self.ACCENT_RED, fg_color="#000000", corner_radius=2).pack(anchor="w")
 
-        lbl_nome_bio = ctk.CTkLabel(info_f, text=dados["nome"], font=("Roboto", 14, "bold"), text_color="white",
-                                    anchor="w", justify="left", wraplength=300)
-        lbl_nome_bio.pack(fill="x", anchor="w")
-        try: lbl_nome_bio._label.configure(wraplength=300)
+        # Nome maior e em negrito
+        lbl_nome_bio = ctk.CTkLabel(info_f, text=dados["nome"].upper(), font=("Roboto", 12, "bold"), text_color="white",
+                                    anchor="w", justify="left", wraplength=240)
+        lbl_nome_bio.pack(fill="x", anchor="w", pady=(2, 0))
+        try: lbl_nome_bio._label.configure(wraplength=240)
         except: pass
 
-        # Data/Hora
-        ctk.CTkLabel(inner, text=f"🕒 {dados['data_evento']}", font=("Roboto", 10, "bold"), text_color="#f59e0b").pack(anchor="e")
+        # Data/Hora logo abaixo do nome
+        ctk.CTkLabel(info_f, text=f"🕒 {dados['data_evento']}", font=("Roboto", 10), text_color="#f59e0b").pack(anchor="w", pady=(2, 0))
 
-        # Evento / Leitor / Dispositivo
+        # Detalhes (Leitor, Evento, Dispositivo) mais compactos
+        detalhes_f = ctk.CTkFrame(inner, fg_color="transparent")
+        detalhes_f.pack(fill="x", pady=(4, 0))
+
         if dados.get("leitor"):
-            lbl_leitor_bio = ctk.CTkLabel(inner, text=f"📍 {dados['leitor']}", font=("Roboto", 12, "bold"), text_color=self.ACCENT_RED,
-                                          anchor="w", justify="left", wraplength=300)
+            lbl_leitor_bio = ctk.CTkLabel(detalhes_f, text=f"📍 {dados['leitor']}", font=("Roboto", 10, "bold"), text_color=self.ACCENT_RED,
+                                          anchor="w", justify="left", wraplength=350)
             lbl_leitor_bio.pack(fill="x", anchor="w")
-            try: lbl_leitor_bio._label.configure(wraplength=300)
+            try: lbl_leitor_bio._label.configure(wraplength=350)
             except: pass
 
         if dados.get("evento"):
-            lbl_evento_bio = ctk.CTkLabel(inner, text=dados["evento"], font=("Roboto", 12), text_color="#facc15",
-                                          anchor="w", justify="left", wraplength=300)
+            lbl_evento_bio = ctk.CTkLabel(detalhes_f, text=dados["evento"], font=("Roboto", 10), text_color="#facc15",
+                                          anchor="w", justify="left", wraplength=350)
             lbl_evento_bio.pack(fill="x", anchor="w")
-            try: lbl_evento_bio._label.configure(wraplength=300)
+            try: lbl_evento_bio._label.configure(wraplength=350)
             except: pass
 
         if dados.get("dispositivo"):
-            lbl_disp_bio = ctk.CTkLabel(inner, text=f"🖥️ {dados['dispositivo']}", font=("Roboto", 12), text_color="#cbd5e1",
-                                        anchor="w", justify="left", wraplength=300)
+            lbl_disp_bio = ctk.CTkLabel(detalhes_f, text=f"🖥️ {dados['dispositivo']}", font=("Roboto", 10), text_color="#999999",
+                                        anchor="w", justify="left", wraplength=350)
             lbl_disp_bio.pack(fill="x", anchor="w")
-            try: lbl_disp_bio._label.configure(wraplength=300)
+            try: lbl_disp_bio._label.configure(wraplength=350)
             except: pass
 
         self.eventos_bio_cards[id_reg] = {'frame': card, 'tem_foto': tem_foto}
