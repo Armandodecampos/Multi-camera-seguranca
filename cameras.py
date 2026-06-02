@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 import customtkinter as ctk
-from PIL import Image, ImageTk, ImageDraw
+from PIL import Image, ImageTk, ImageDraw, ImageGrab
 import json
 import os
 import re
@@ -911,6 +911,7 @@ class CentralMonitoramento(ctk.CTk):
         self.ctrl_pressionado = False
         self.predefinicoes_desbloqueadas = set()
         self.gravando_tudo = False
+        self.tamanho_gravacao_tudo = None
         self.video_writer_tudo = None
         self.caminho_video_tudo = None
         self.ultimo_frame_tudo_tempo = 0
@@ -2269,6 +2270,7 @@ class CentralMonitoramento(ctk.CTk):
                 self.caminho_video_tudo = os.path.join(downloads_dir, filename)
 
                 self.gravando_tudo = True
+                self.tamanho_gravacao_tudo = None
                 self.btn_gravar_tudo.configure(text="Parar Gravação Total", fg_color=self.ACCENT_RED)
                 print(f"Gravação TOTAL iniciada: {self.caminho_video_tudo}")
             except Exception as e:
@@ -2789,8 +2791,8 @@ class CentralMonitoramento(ctk.CTk):
             for h in self.camera_handlers.values():
                 if h != "CONECTANDO": h.ativo = False
 
-            # Se estiver gravando tudo, todas as câmeras do viewport atual devem estar ativas
-            indices_ativos = range(self.num_slots) if self.gravando_tudo else indices_trabalho
+            # Gerencia câmeras ativas (apenas as visíveis no grid)
+            indices_ativos = indices_trabalho
 
             for idx in indices_ativos:
                 ip_work = self.grid_cameras[idx]
@@ -2800,10 +2802,6 @@ class CentralMonitoramento(ctk.CTk):
             for i in range(self.num_slots):
                 ip = self.grid_cameras[i]
 
-                # Se estiver gravando tudo, queremos processar todos os frames,
-                # mas não necessariamente atualizar a UI se o slot não estiver em indices_trabalho
-                estamos_gravando_este = self.gravando_tudo and ip != "0.0.0.0"
-
                 # Verifica se houve timeout na gravação
                 handler = self.camera_handlers.get(ip)
                 if handler and handler != "CONECTANDO" and handler.timeout_atingido:
@@ -2812,7 +2810,7 @@ class CentralMonitoramento(ctk.CTk):
                     self.abrir_modal_alerta("Gravação Finalizada", f"A gravação da câmera {nome} foi finalizada automaticamente após 10 minutos.", show_open_folder=True)
 
                 # Caso o slot deva estar vazio ou não esteja no foco de atualização
-                if not ip or ip == "0.0.0.0" or (i not in indices_trabalho and not estamos_gravando_este):
+                if not ip or ip == "0.0.0.0" or i not in indices_trabalho:
                     # Segurança: se o slot deveria estar vazio, garante texto e imagem vazia
                     if ip == "0.0.0.0":
                         try:
@@ -2919,53 +2917,37 @@ class CentralMonitoramento(ctk.CTk):
                     # print(f"Erro render slot {i}: {e}")
                     pass
 
-            # Lógica de Gravação em Mosaico (Total)
+            # Lógica de Gravação Total (Captura da Janela)
             if self.gravando_tudo:
                 agora_rec = time.time()
                 if agora_rec - self.ultimo_frame_tudo_tempo >= (1.0 / self.fps_tudo):
-                    # Define resolução do mosaico (320x240 por slot)
-                    sw, sh = 320, 240
-                    mos_w = self.grid_cols * sw
-                    mos_h = self.grid_rows * sh
+                    try:
+                        scaling = self._get_window_scaling()
+                        # Obtém coordenadas e dimensões da janela
+                        x = int(self.winfo_rootx() * scaling)
+                        y = int(self.winfo_rooty() * scaling)
+                        w = int(self.winfo_width() * scaling)
+                        h = int(self.winfo_height() * scaling)
 
-                    mosaic = np.zeros((mos_h, mos_w, 3), dtype=np.uint8)
+                        # Captura o frame da janela inteira (incluindo sidebars e controles)
+                        cap_img = ImageGrab.grab(bbox=(x, y, x + w, y + h))
+                        frame_bgr = cv2.cvtColor(np.array(cap_img), cv2.COLOR_RGB2BGR)
 
-                    for i in range(self.num_slots):
-                        ip = self.grid_cameras[i]
-                        row, col = i // self.grid_cols, i % self.grid_cols
-
-                        img_bgr = None
-                        pil_img = current_ips_pil.get(ip)
-                        if pil_img:
-                            # Converte PIL para BGR para o OpenCV VideoWriter
-                            img_np = np.array(pil_img)
-                            img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-                            img_bgr = cv2.resize(img_bgr, (sw, sh), interpolation=cv2.INTER_LINEAR)
-                        else:
-                            # Se não tiver frame mas tiver IP, coloca uma mensagem
-                            img_bgr = np.zeros((sh, sw, 3), dtype=np.uint8)
-                            if ip and ip != "0.0.0.0":
-                                cv2.putText(img_bgr, "SEM SINAL", (20, sh//2), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
-
-                        mosaic[row*sh:(row+1)*sh, col*sw:(col+1)*sw] = img_bgr
-
-                    # Adiciona Timestamp no mosaico
-                    timestamp_str = time.strftime("%d/%m/%Y %H:%M:%S")
-                    cv2.putText(mosaic, timestamp_str, (10, mos_h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,0,255), 2)
-
-                    # Inicializa VideoWriter se necessário
-                    if self.video_writer_tudo is None:
-                        try:
+                        # Inicializa VideoWriter se necessário
+                        if self.video_writer_tudo is None:
                             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-                            self.video_writer_tudo = cv2.VideoWriter(self.caminho_video_tudo, fourcc, self.fps_tudo, (mos_w, mos_h))
-                        except Exception as e:
-                            print(f"Erro ao iniciar VideoWriter Tudo: {e}")
-                            self.gravando_tudo = False
+                            self.video_writer_tudo = cv2.VideoWriter(self.caminho_video_tudo, fourcc, self.fps_tudo, (w, h))
+                            self.tamanho_gravacao_tudo = (w, h)
 
-                    if self.video_writer_tudo is not None:
-                        self.video_writer_tudo.write(mosaic)
+                        # Redimensiona se o tamanho mudou durante a gravação para manter consistência no vídeo
+                        if (w, h) != self.tamanho_gravacao_tudo:
+                            frame_bgr = cv2.resize(frame_bgr, self.tamanho_gravacao_tudo)
 
-                    self.ultimo_frame_tudo_tempo = agora_rec
+                        if self.video_writer_tudo is not None:
+                            self.video_writer_tudo.write(frame_bgr)
+                        self.ultimo_frame_tudo_tempo = agora_rec
+                    except Exception as e:
+                        print(f"Erro na gravação total da janela: {e}")
 
         except Exception as e:
             # print(f"Erro no loop de exibicao: {e}")
