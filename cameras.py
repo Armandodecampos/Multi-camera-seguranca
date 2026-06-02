@@ -1223,9 +1223,9 @@ class CentralMonitoramento(ctk.CTk):
         borda_l.pack(side="left", fill="y")
 
         inner = ctk.CTkFrame(card, fg_color="transparent")
-        inner.pack(side="left", fill="both", expand=True, padx=4, pady=4)
+        inner.pack(side="left", fill="x", expand=True, padx=4, pady=4)
 
-        # Foto e Info (Foto 2x maior: 100x100)
+        # Foto e Info (Foto 100x100)
         header_f = ctk.CTkFrame(inner, fg_color="transparent")
         header_f.pack(fill="x")
 
@@ -1244,44 +1244,41 @@ class CentralMonitoramento(ctk.CTk):
             ctk.CTkLabel(header_f, text="👤", font=("Roboto", 40)).pack(side="left", padx=(0, 6))
 
         info_f = ctk.CTkFrame(header_f, fg_color="transparent")
-        info_f.pack(side="left", fill="both", expand=True)
+        info_f.pack(side="left", fill="x", expand=True)
 
         ctk.CTkLabel(info_f, text=f"ID: {dados['id_usuario']}", font=("Roboto", 10, "bold"),
                      text_color=self.ACCENT_RED, fg_color="#000000", corner_radius=2).pack(anchor="w")
 
         # Nome maior e em negrito
         lbl_nome_bio = ctk.CTkLabel(info_f, text=dados["nome"].upper(), font=("Roboto", 12, "bold"), text_color="white",
-                                    anchor="w", justify="left", wraplength=240)
-        lbl_nome_bio.pack(fill="x", anchor="w", pady=(2, 0))
-        try: lbl_nome_bio._label.configure(wraplength=240)
+                                    anchor="w", justify="left", wraplength=260)
+        lbl_nome_bio.pack(fill="x", anchor="w", pady=(1, 0))
+        try: lbl_nome_bio._label.configure(wraplength=260)
         except: pass
 
         # Data/Hora logo abaixo do nome
-        ctk.CTkLabel(info_f, text=f"🕒 {dados['data_evento']}", font=("Roboto", 10), text_color="#f59e0b").pack(anchor="w", pady=(2, 0))
+        ctk.CTkLabel(info_f, text=f"🕒 {dados['data_evento']}", font=("Roboto", 10), text_color="#f59e0b").pack(anchor="w", pady=(1, 0))
 
-        # Detalhes (Leitor, Evento, Dispositivo) mais compactos
-        detalhes_f = ctk.CTkFrame(inner, fg_color="transparent")
-        detalhes_f.pack(fill="x", pady=(4, 0))
-
+        # Detalhes (Leitor, Evento, Dispositivo) agora dentro de info_f para economizar espaço vertical
         if dados.get("leitor"):
-            lbl_leitor_bio = ctk.CTkLabel(detalhes_f, text=f"📍 {dados['leitor']}", font=("Roboto", 10, "bold"), text_color=self.ACCENT_RED,
-                                          anchor="w", justify="left", wraplength=350)
+            lbl_leitor_bio = ctk.CTkLabel(info_f, text=f"📍 {dados['leitor']}", font=("Roboto", 10, "bold"), text_color=self.ACCENT_RED,
+                                          anchor="w", justify="left", wraplength=260)
             lbl_leitor_bio.pack(fill="x", anchor="w")
-            try: lbl_leitor_bio._label.configure(wraplength=350)
+            try: lbl_leitor_bio._label.configure(wraplength=260)
             except: pass
 
         if dados.get("evento"):
-            lbl_evento_bio = ctk.CTkLabel(detalhes_f, text=dados["evento"], font=("Roboto", 10), text_color="#facc15",
-                                          anchor="w", justify="left", wraplength=350)
+            lbl_evento_bio = ctk.CTkLabel(info_f, text=dados["evento"], font=("Roboto", 10), text_color="#facc15",
+                                          anchor="w", justify="left", wraplength=260)
             lbl_evento_bio.pack(fill="x", anchor="w")
-            try: lbl_evento_bio._label.configure(wraplength=350)
+            try: lbl_evento_bio._label.configure(wraplength=260)
             except: pass
 
         if dados.get("dispositivo"):
-            lbl_disp_bio = ctk.CTkLabel(detalhes_f, text=f"🖥️ {dados['dispositivo']}", font=("Roboto", 10), text_color="#999999",
-                                        anchor="w", justify="left", wraplength=350)
+            lbl_disp_bio = ctk.CTkLabel(info_f, text=f"🖥️ {dados['dispositivo']}", font=("Roboto", 10), text_color="#999999",
+                                        anchor="w", justify="left", wraplength=260)
             lbl_disp_bio.pack(fill="x", anchor="w")
-            try: lbl_disp_bio._label.configure(wraplength=350)
+            try: lbl_disp_bio._label.configure(wraplength=260)
             except: pass
 
         self.eventos_bio_cards[id_reg] = {'frame': card, 'tem_foto': tem_foto}
