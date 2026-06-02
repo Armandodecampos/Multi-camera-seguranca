@@ -1,7 +1,9 @@
 import cv2
 import numpy as np
+import mss
+import mss.tools
 import customtkinter as ctk
-from PIL import Image, ImageTk, ImageDraw, ImageGrab
+from PIL import Image, ImageTk, ImageDraw
 import json
 import os
 import re
@@ -17,6 +19,12 @@ import requests
 from requests.auth import HTTPDigestAuth
 import subprocess
 import platform
+if platform.system() == "Windows":
+    try:
+        import ctypes
+        from ctypes import wintypes
+    except ImportError:
+        pass
 from datetime import datetime
 from tkinter import filedialog
 from bs4 import BeautifulSoup
@@ -916,6 +924,7 @@ class CentralMonitoramento(ctk.CTk):
         self.caminho_video_tudo = None
         self.ultimo_frame_tudo_tempo = 0
         self.fps_tudo = 10
+        self.sct = mss.mss()
 
         # Grid Virtual e Viewport
         self.virtual_grid = {}
@@ -2935,8 +2944,6 @@ class CentralMonitoramento(ctk.CTk):
                         x, y, w_box, h_box = 0, 0, 0, 0
                         if platform.system() == "Windows":
                             try:
-                                import ctypes
-                                from ctypes import wintypes
                                 hwnd = self.winfo_id()
                                 rect = wintypes.RECT()
                                 ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
@@ -2949,25 +2956,22 @@ class CentralMonitoramento(ctk.CTk):
                             x, y = int(rx * sc), int(ry * sc)
                             w_box, h_box = int(rw * sc), int(rh * sc)
 
-                        # Captura tela cheia e corta manualmente (mais robusto contra telas pretas no Windows)
-                        img_full = ImageGrab.grab(all_screens=True)
-                        tw, th = img_full.size
+                        # Captura a região da janela usando mss
+                        monitor = {"top": y, "left": x, "width": w_box, "height": h_box}
+                        sct_img = self.sct.grab(monitor)
 
-                        x1 = max(0, min(tw-2, x))
-                        y1 = max(0, min(th-2, y))
-                        x2 = max(x1+2, min(tw, x + w_box))
-                        y2 = max(y1+2, min(th, y + h_box))
+                        # Converte mss para numpy array (OpenCV format)
+                        # mss retorna BGRA, OpenCV usa BGR
+                        frame_bgr = np.array(sct_img)
+                        frame_bgr = cv2.cvtColor(frame_bgr, cv2.COLOR_BGRA2BGR)
 
-                        cap_img = img_full.crop((x1, y1, x2, y2))
-                        w_final, h_final = cap_img.size
+                        h_final, w_final = frame_bgr.shape[:2]
 
                         # Garante dimensões pares para o VideoWriter
-                        w_final = w_final if w_final % 2 == 0 else w_final - 1
-                        h_final = h_final if h_final % 2 == 0 else h_final - 1
-                        if cap_img.size != (w_final, h_final):
-                            cap_img = cap_img.resize((w_final, h_final), Image.LANCZOS)
-
-                        frame_bgr = cv2.cvtColor(np.array(cap_img), cv2.COLOR_RGB2BGR)
+                        if w_final % 2 != 0 or h_final % 2 != 0:
+                            w_final = w_final if w_final % 2 == 0 else w_final - 1
+                            h_final = h_final if h_final % 2 == 0 else h_final - 1
+                            frame_bgr = cv2.resize(frame_bgr, (w_final, h_final))
 
                         # Inicializa VideoWriter se necessário
                         if self.video_writer_tudo is None:
@@ -2975,7 +2979,7 @@ class CentralMonitoramento(ctk.CTk):
                             # Tenta salvar um frame de debug para diagnóstico
                             try:
                                 debug_path = self.caminho_video_tudo.replace(".avi", "_debug.png")
-                                cap_img.save(debug_path)
+                                cv2.imwrite(debug_path, frame_bgr)
                             except: pass
 
                             fourcc = cv2.VideoWriter_fourcc(*'XVID')
