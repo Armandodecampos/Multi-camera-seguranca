@@ -1,9 +1,13 @@
 import cv2
 import numpy as np
-import mss
-import mss.tools
+try:
+    import mss
+    import mss.tools
+    HAS_MSS = True
+except ImportError:
+    HAS_MSS = False
 import customtkinter as ctk
-from PIL import Image, ImageTk, ImageDraw
+from PIL import Image, ImageTk, ImageDraw, ImageGrab
 import json
 import os
 import re
@@ -924,7 +928,7 @@ class CentralMonitoramento(ctk.CTk):
         self.caminho_video_tudo = None
         self.ultimo_frame_tudo_tempo = 0
         self.fps_tudo = 10
-        self.sct = mss.mss()
+        self.sct = mss.mss() if HAS_MSS else None
 
         # Grid Virtual e Viewport
         self.virtual_grid = {}
@@ -2956,14 +2960,28 @@ class CentralMonitoramento(ctk.CTk):
                             x, y = int(rx * sc), int(ry * sc)
                             w_box, h_box = int(rw * sc), int(rh * sc)
 
-                        # Captura a região da janela usando mss
-                        monitor = {"top": y, "left": x, "width": w_box, "height": h_box}
-                        sct_img = self.sct.grab(monitor)
+                        if self.sct:
+                            # Captura a região da janela usando mss
+                            monitor = {"top": y, "left": x, "width": w_box, "height": h_box}
+                            sct_img = self.sct.grab(monitor)
 
-                        # Converte mss para numpy array (OpenCV format)
-                        # mss retorna BGRA, OpenCV usa BGR
-                        frame_bgr = np.array(sct_img)
-                        frame_bgr = cv2.cvtColor(frame_bgr, cv2.COLOR_BGRA2BGR)
+                            # Converte mss para numpy array (OpenCV format)
+                            # mss retorna BGRA, OpenCV usa BGR
+                            frame_bgr = np.array(sct_img)
+                            frame_bgr = cv2.cvtColor(frame_bgr, cv2.COLOR_BGRA2BGR)
+                        else:
+                            # Fallback para ImageGrab se mss não estiver disponível
+                            # Captura tela cheia e corta manualmente
+                            img_full = ImageGrab.grab(all_screens=True)
+                            tw, th = img_full.size
+
+                            x1 = max(0, min(tw-2, x))
+                            y1 = max(0, min(th-2, y))
+                            x2 = max(x1+2, min(tw, x + w_box))
+                            y2 = max(y1+2, min(th, y + h_box))
+
+                            cap_img = img_full.crop((x1, y1, x2, y2))
+                            frame_bgr = cv2.cvtColor(np.array(cap_img), cv2.COLOR_RGB2BGR)
 
                         h_final, w_final = frame_bgr.shape[:2]
 
