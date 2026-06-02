@@ -2944,8 +2944,7 @@ class CentralMonitoramento(ctk.CTk):
                         sc = self._window_scaling
 
                         # No Windows, GetWindowRect é o método mais confiável para capturar a janela inteira
-                        # incluindo bordas e menus, e já retorna coordenadas físicas.
-                        x, y, w_box, h_box = 0, 0, 0, 0
+                        # incluindo bordas e menus, e já retorna coordenadas físicas sem necessidade de scaling manual.
                         if platform.system() == "Windows":
                             try:
                                 hwnd = self.winfo_id()
@@ -2954,11 +2953,20 @@ class CentralMonitoramento(ctk.CTk):
                                 x, y = rect.left, rect.top
                                 w_box, h_box = rect.right - rect.left, rect.bottom - rect.top
                             except:
-                                x, y = rx, ry
+                                x, y = int(rx * sc), int(ry * sc)
                                 w_box, h_box = int(rw * sc), int(rh * sc)
                         else:
                             x, y = int(rx * sc), int(ry * sc)
                             w_box, h_box = int(rw * sc), int(rh * sc)
+
+                        # Forçamos dimensões pares para compatibilidade com codecs
+                        w_box = w_box & ~1
+                        h_box = h_box & ~1
+
+                        # Se as dimensões forem inválidas ou o app estiver minimizado, pulamos a gravação
+                        # mas NÃO retornamos, para não quebrar o loop de exibição.
+                        if w_box < 200 or h_box < 200:
+                            raise ValueError("Janela muito pequena ou minimizada")
 
                         if self.sct:
                             # Captura a região da janela usando mss
@@ -2983,13 +2991,18 @@ class CentralMonitoramento(ctk.CTk):
                             cap_img = img_full.crop((x1, y1, x2, y2))
                             frame_bgr = cv2.cvtColor(np.array(cap_img), cv2.COLOR_RGB2BGR)
 
-                        h_final, w_final = frame_bgr.shape[:2]
+                        h_captured, w_captured = frame_bgr.shape[:2]
 
-                        # Garante dimensões pares para o VideoWriter
-                        if w_final % 2 != 0 or h_final % 2 != 0:
-                            w_final = w_final if w_final % 2 == 0 else w_final - 1
-                            h_final = h_final if h_final % 2 == 0 else h_final - 1
-                            frame_bgr = cv2.resize(frame_bgr, (w_final, h_final))
+                        # Se a captura for menor que o esperado (janela fora da tela),
+                        # colocamos em um fundo preto para evitar distorção (squashing).
+                        if w_captured != w_box or h_captured != h_box:
+                            canvas = np.zeros((h_box, w_box, 3), dtype=np.uint8)
+                            ch = min(h_box, h_captured)
+                            cw = min(w_box, w_captured)
+                            canvas[:ch, :cw] = frame_bgr[:ch, :cw]
+                            frame_bgr = canvas
+
+                        h_final, w_final = frame_bgr.shape[:2]
 
                         # Inicializa VideoWriter se necessário
                         if self.video_writer_tudo is None:
