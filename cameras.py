@@ -2266,7 +2266,7 @@ class CentralMonitoramento(ctk.CTk):
                 os.makedirs(downloads_dir, exist_ok=True)
 
                 timestamp = time.strftime("%Y%m%d_%H%M%S")
-                filename = f"monitoramento_total_{timestamp}.mp4"
+                filename = f"monitoramento_total_{timestamp}.avi"
                 self.caminho_video_tudo = os.path.join(downloads_dir, filename)
 
                 self.gravando_tudo = True
@@ -2932,7 +2932,7 @@ class CentralMonitoramento(ctk.CTk):
 
                         # No Windows, GetWindowRect é o método mais confiável para capturar a janela inteira
                         # incluindo bordas e menus, e já retorna coordenadas físicas.
-                        cap_img = None
+                        x, y, w_box, h_box = 0, 0, 0, 0
                         if platform.system() == "Windows":
                             try:
                                 import ctypes
@@ -2940,33 +2940,45 @@ class CentralMonitoramento(ctk.CTk):
                                 hwnd = self.winfo_id()
                                 rect = wintypes.RECT()
                                 ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
-                                bbox = (rect.left, rect.top, rect.right, rect.bottom)
-                                cap_img = ImageGrab.grab(bbox=bbox)
-                            except: pass
-
-                        if cap_img is None:
-                            # Fallback para outros sistemas ou falha no Windows
-                            # No Windows rx/ry costumam ser físicos se DPI aware, em outros lógicos.
-                            if platform.system() == "Windows":
+                                x, y = rect.left, rect.top
+                                w_box, h_box = rect.right - rect.left, rect.bottom - rect.top
+                            except:
                                 x, y = rx, ry
-                            else:
-                                x, y = int(rx * sc), int(ry * sc)
+                                w_box, h_box = int(rw * sc), int(rh * sc)
+                        else:
+                            x, y = int(rx * sc), int(ry * sc)
+                            w_box, h_box = int(rw * sc), int(rh * sc)
 
-                            wf, hf = int(rw * sc), int(rh * sc)
+                        # Captura tela cheia e corta manualmente (mais robusto contra telas pretas no Windows)
+                        img_full = ImageGrab.grab(all_screens=True)
+                        tw, th = img_full.size
 
-                            # Garante dimensões pares
-                            wf = wf if wf % 2 == 0 else wf - 1
-                            hf = hf if hf % 2 == 0 else hf - 1
+                        x1 = max(0, min(tw-2, x))
+                        y1 = max(0, min(th-2, y))
+                        x2 = max(x1+2, min(tw, x + w_box))
+                        y2 = max(y1+2, min(th, y + h_box))
 
-                            cap_img = ImageGrab.grab(bbox=(x, y, x + wf, y + hf))
-
+                        cap_img = img_full.crop((x1, y1, x2, y2))
                         w_final, h_final = cap_img.size
+
+                        # Garante dimensões pares para o VideoWriter
+                        w_final = w_final if w_final % 2 == 0 else w_final - 1
+                        h_final = h_final if h_final % 2 == 0 else h_final - 1
+                        if cap_img.size != (w_final, h_final):
+                            cap_img = cap_img.resize((w_final, h_final), Image.LANCZOS)
+
                         frame_bgr = cv2.cvtColor(np.array(cap_img), cv2.COLOR_RGB2BGR)
 
                         # Inicializa VideoWriter se necessário
                         if self.video_writer_tudo is None:
-                            print(f"GRAVAR TUDO: Iniciando {w_final}x{h_final} (Window: {rx},{ry} {rw}x{rh}, Scaling: {sc})")
-                            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                            print(f"GRAVAR TUDO: Iniciando {w_final}x{h_final} (Format: AVI/XVID)")
+                            # Tenta salvar um frame de debug para diagnóstico
+                            try:
+                                debug_path = self.caminho_video_tudo.replace(".avi", "_debug.png")
+                                cap_img.save(debug_path)
+                            except: pass
+
+                            fourcc = cv2.VideoWriter_fourcc(*'XVID')
                             self.video_writer_tudo = cv2.VideoWriter(self.caminho_video_tudo, fourcc, self.fps_tudo, (w_final, h_final))
                             self.tamanho_gravacao_tudo = (w_final, h_final)
 
