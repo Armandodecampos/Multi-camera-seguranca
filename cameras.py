@@ -2929,26 +2929,38 @@ class CentralMonitoramento(ctk.CTk):
 
                         # Usa o scaling detectado pelo CustomTkinter
                         sc = self._window_scaling
-                        x, y = int(rx * sc), int(ry * sc)
-                        w, h = int(rw * sc), int(rh * sc)
 
-                        # Garante dimensões pares (requisito de muitos codecs)
-                        w = w if w % 2 == 0 else w - 1
-                        h = h if h % 2 == 0 else h - 1
+                        # No Windows, GetWindowRect é o método mais confiável para capturar a janela inteira
+                        # incluindo bordas e menus, e já retorna coordenadas físicas.
+                        cap_img = None
+                        if platform.system() == "Windows":
+                            try:
+                                import ctypes
+                                from ctypes import wintypes
+                                hwnd = self.winfo_id()
+                                rect = wintypes.RECT()
+                                ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
+                                bbox = (rect.left, rect.top, rect.right, rect.bottom)
+                                cap_img = ImageGrab.grab(bbox=bbox)
+                            except: pass
 
-                        # Captura tela cheia e corta (mais robusto que bbox direto em alguns sistemas)
-                        img_full = ImageGrab.grab(all_screens=True)
-                        tw, th = img_full.size
+                        if cap_img is None:
+                            # Fallback para outros sistemas ou falha no Windows
+                            # No Windows rx/ry costumam ser físicos se DPI aware, em outros lógicos.
+                            if platform.system() == "Windows":
+                                x, y = rx, ry
+                            else:
+                                x, y = int(rx * sc), int(ry * sc)
 
-                        # Ajusta crop para limites reais da captura
-                        x1 = max(0, min(tw-2, x))
-                        y1 = max(0, min(th-2, y))
-                        x2 = max(x1+2, min(tw, x1 + w))
-                        y2 = max(y1+2, min(th, y1 + h))
+                            wf, hf = int(rw * sc), int(rh * sc)
 
-                        cap_img = img_full.crop((x1, y1, x2, y2))
+                            # Garante dimensões pares
+                            wf = wf if wf % 2 == 0 else wf - 1
+                            hf = hf if hf % 2 == 0 else hf - 1
+
+                            cap_img = ImageGrab.grab(bbox=(x, y, x + wf, y + hf))
+
                         w_final, h_final = cap_img.size
-
                         frame_bgr = cv2.cvtColor(np.array(cap_img), cv2.COLOR_RGB2BGR)
 
                         # Inicializa VideoWriter se necessário
@@ -2959,7 +2971,7 @@ class CentralMonitoramento(ctk.CTk):
                             self.tamanho_gravacao_tudo = (w_final, h_final)
 
                         # Redimensiona se o tamanho mudou durante a gravação para manter consistência no vídeo
-                        if (w, h) != self.tamanho_gravacao_tudo:
+                        if (w_final, h_final) != self.tamanho_gravacao_tudo:
                             frame_bgr = cv2.resize(frame_bgr, self.tamanho_gravacao_tudo)
 
                         if self.video_writer_tudo is not None:
