@@ -255,8 +255,12 @@ class BioMonitorThread(threading.Thread):
                 self.page.fill("#username", USUARIO_BIO)
                 self.page.fill("#password", SENHA_BIO)
 
-                btn_login = self.page.locator("input[type='submit'], button, a.login-btn")
-                btn_login.first.click()
+                try:
+                    btn_login = self.page.locator("button:visible, input[type='submit']:visible, a.login-btn:visible")
+                    btn_login.first.click(timeout=5000)
+                except:
+                    print("[!] BIO: Botão de login não clicável, tentando via tecla Enter...")
+                    self.page.press("#password", "Enter")
 
                 self.page.wait_for_url(re.compile(r"(main|dashboard)\.do"), timeout=30000)
                 print("[+] BIO: Login efetuado com sucesso!")
@@ -285,8 +289,12 @@ class BioMonitorThread(threading.Thread):
                     print("[!] BIO: Sessão expirada ou redirecionada. Tentando re-autenticar...")
                     self.page.fill("#username", USUARIO_BIO)
                     self.page.fill("#password", SENHA_BIO)
-                    btn_login = self.page.locator("input[type='submit'], button, a.login-btn")
-                    btn_login.first.click()
+                    try:
+                        btn_login = self.page.locator("button:visible, input[type='submit']:visible, a.login-btn:visible")
+                        btn_login.first.click(timeout=5000)
+                    except:
+                        print("[!] BIO: Botão de login não clicável, tentando via tecla Enter...")
+                        self.page.press("#password", "Enter")
                     self.page.wait_for_url(re.compile(r"(main|dashboard)\.do"), timeout=15000)
                     print("[+] BIO: Re-autenticação bem-sucedida.")
 
