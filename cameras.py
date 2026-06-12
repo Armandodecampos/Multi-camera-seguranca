@@ -32,7 +32,6 @@ DIRETORIO_SAIDA = "relatorio_acessos"
 DIRETORIO_FOTOS = os.path.join(DIRETORIO_SAIDA, "fotos")
 ARQUIVO_CSV = os.path.join(DIRETORIO_SAIDA, "historico_acessos.csv")
 ARQUIVO_HTML = os.path.join(DIRETORIO_SAIDA, "relatorio_visual.html")
-ARQUIVO_HTML_ROOT = "Eventos Biométricos.html"
 
 # Cria as pastas caso não existam
 os.makedirs(DIRETORIO_FOTOS, exist_ok=True)
@@ -258,11 +257,6 @@ def atualizar_relatorio_html():
     content_relatorio = gerar_html("")
     with open(ARQUIVO_HTML, "w", encoding="utf-8") as f:
         f.write(content_relatorio)
-
-    # Escreve o relatório na raiz
-    content_root = gerar_html("relatorio_acessos/")
-    with open(ARQUIVO_HTML_ROOT, "w", encoding="utf-8") as f:
-        f.write(content_root)
 
 class BioMonitorThread(threading.Thread):
     def __init__(self, queue_ui):
