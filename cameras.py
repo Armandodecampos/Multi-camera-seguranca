@@ -32,6 +32,7 @@ DIRETORIO_SAIDA = "relatorio_acessos"
 DIRETORIO_FOTOS = os.path.join(DIRETORIO_SAIDA, "fotos")
 ARQUIVO_CSV = os.path.join(DIRETORIO_SAIDA, "historico_acessos.csv")
 ARQUIVO_HTML = os.path.join(DIRETORIO_SAIDA, "relatorio_visual.html")
+ARQUIVO_HTML_ROOT = "Eventos Biométricos.html"
 
 # Cria as pastas caso não existam
 os.makedirs(DIRETORIO_FOTOS, exist_ok=True)
@@ -174,7 +175,7 @@ def registrar_evento(id_usuario, nome, evento, dispositivo, leitor, data_evento,
         })
 
 def atualizar_relatorio_html():
-    """Gera ou atualiza o dashboard estático externo em HTML."""
+    """Gera ou atualiza o dashboard estático externo em HTML com busca."""
     registros = []
     if os.path.exists(ARQUIVO_CSV):
         with open(ARQUIVO_CSV, mode='r', encoding='utf-8') as f:
@@ -182,7 +183,9 @@ def atualizar_relatorio_html():
             registros = list(reader)
             registros.reverse()
 
-    html_content = f"""<!DOCTYPE html>
+    def gerar_html(path_fotos_prefix=""):
+        ultima_atualizacao = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+        html = f"""<!DOCTYPE html>
 <html lang="pt-br">
 <head>
     <meta charset="UTF-8">
@@ -194,18 +197,29 @@ def atualizar_relatorio_html():
     <div class="container mx-auto px-4 py-8">
         <header class="mb-8 border-b border-gray-800 pb-4">
             <h1 class="text-3xl font-bold text-teal-400">Relatório de Monitoramento Biométrico</h1>
-            <p class="text-gray-400">Última atualização: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}</p>
+            <p class="text-gray-400">Última atualização: {ultima_atualizacao}</p>
         </header>
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-    """
-    for r in registros:
-        caminho_foto = r.get('Caminho_Foto', '')
-        img_tag_src = f"fotos/{os.path.basename(caminho_foto)}" if caminho_foto else "https://via.placeholder.com/150"
-        disp_html = f'<p class="text-sm text-gray-300 font-medium mt-0.5">🖥️ {r.get("Dispositivo", "")}</p>'
-        leitor_html = f'<p class="text-xs text-teal-400 font-semibold mt-0.5">Leitor: {r.get("Leitor", "")}</p>'
-        evento_html = f'<p class="text-sm text-yellow-400 font-medium mt-1">{r.get("Evento", "")}</p>'
-        html_content += f"""
-            <div class="bg-gray-800 rounded-xl overflow-hidden shadow-lg border border-gray-700 p-4">
+
+        <div class="mb-8">
+            <input type="text" id="searchInput" placeholder="Pesquisar por nome, ID, dispositivo, leitor ou evento..."
+                   class="w-full px-4 py-3 rounded-xl bg-gray-800 border border-gray-700 text-white focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-lg">
+        </div>
+
+        <div id="eventGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+"""
+        for r in registros:
+            caminho_foto = r.get('Caminho_Foto', '')
+            if caminho_foto:
+                img_tag_src = f"{path_fotos_prefix}fotos/{os.path.basename(caminho_foto)}"
+            else:
+                img_tag_src = "https://via.placeholder.com/150"
+
+            disp_html = f'<p class="text-sm text-gray-300 font-medium mt-0.5">🖥️ {r.get("Dispositivo", "")}</p>'
+            leitor_html = f'<p class="text-xs text-teal-400 font-semibold mt-0.5">Leitor: {r.get("Leitor", "")}</p>'
+            evento_html = f'<p class="text-sm text-yellow-400 font-medium mt-1">{r.get("Evento", "")}</p>'
+
+            html += f"""
+            <div class="evento-card bg-gray-800 rounded-xl overflow-hidden shadow-lg border border-gray-700 p-4 transition-all duration-300 hover:border-teal-500">
                 <div class="flex justify-center mb-4">
                     <img class="h-44 object-contain rounded-lg" src="{img_tag_src}" onerror="this.src='https://via.placeholder.com/150'">
                 </div>
@@ -216,10 +230,39 @@ def atualizar_relatorio_html():
                     <div><strong>Evento em:</strong> {r['Data_Evento']}</div>
                 </div>
             </div>
-        """
-    html_content += "</div></div></body></html>"
+"""
+        html += """
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('searchInput').addEventListener('input', function() {
+            const searchTerm = this.value.toLowerCase();
+            const cards = document.querySelectorAll('.evento-card');
+
+            cards.forEach(card => {
+                const text = card.textContent.toLowerCase();
+                if (text.includes(searchTerm)) {
+                    card.style.display = 'block';
+                } else {
+                    card.style.display = 'none';
+                }
+            });
+        });
+    </script>
+</body>
+</html>"""
+        return html
+
+    # Escreve o relatório na pasta de relatórios
+    content_relatorio = gerar_html("")
     with open(ARQUIVO_HTML, "w", encoding="utf-8") as f:
-        f.write(html_content)
+        f.write(content_relatorio)
+
+    # Escreve o relatório na raiz
+    content_root = gerar_html("relatorio_acessos/")
+    with open(ARQUIVO_HTML_ROOT, "w", encoding="utf-8") as f:
+        f.write(content_root)
 
 class BioMonitorThread(threading.Thread):
     def __init__(self, queue_ui):
