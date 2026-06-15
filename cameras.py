@@ -28,7 +28,21 @@ USUARIO_BIO = "armando.campos"
 SENHA_BIO = "armandocampos.1"
 
 # Diretórios para salvar os relatórios e imagens extraídas
-DIRETORIO_SAIDA = "relatorio_acessos"
+def obter_desktop():
+    """Retorna o caminho da área de trabalho de forma multiplataforma."""
+    home = os.path.expanduser("~")
+    # Tenta "Desktop" padrão
+    desktop = os.path.join(home, "Desktop")
+    if os.path.exists(desktop):
+        return desktop
+    # Tenta "Área de Trabalho" (comum em sistemas PT-BR antigos ou específicos)
+    desktop_pt = os.path.join(home, "Área de Trabalho")
+    if os.path.exists(desktop_pt):
+        return desktop_pt
+    # Se nada funcionar, usa a home
+    return home
+
+DIRETORIO_SAIDA = os.path.join(obter_desktop(), "Relatório de Acessos")
 DIRETORIO_FOTOS = os.path.join(DIRETORIO_SAIDA, "fotos")
 ARQUIVO_CSV = os.path.join(DIRETORIO_SAIDA, "historico_acessos.csv")
 ARQUIVO_HTML = os.path.join(DIRETORIO_SAIDA, "relatorio_visual.html")
@@ -1273,6 +1287,9 @@ class CentralMonitoramento(ctk.CTk):
         if hasattr(self, 'bio_thread') and self.bio_thread.is_alive():
             self.abrir_modal_alerta("Aviso", "O monitoramento biométrico já está em execução.")
             return
+
+        # Garante que a pasta de saída exista (Caso tenha sido deletada manualmente)
+        os.makedirs(DIRETORIO_FOTOS, exist_ok=True)
 
         print("SISTEMA: Iniciando monitoramento biométrico...")
         self.btn_iniciar_bio.configure(state="disabled", text="Ativo", fg_color=self.ACCENT_RED)
