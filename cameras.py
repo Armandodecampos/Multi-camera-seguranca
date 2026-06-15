@@ -31,15 +31,21 @@ SENHA_BIO = "armandocampos.1"
 def obter_desktop():
     """Retorna o caminho da área de trabalho de forma multiplataforma."""
     home = os.path.expanduser("~")
-    # Tenta "Desktop" padrão
-    desktop = os.path.join(home, "Desktop")
-    if os.path.exists(desktop):
-        return desktop
-    # Tenta "Área de Trabalho" (comum em sistemas PT-BR antigos ou específicos)
-    desktop_pt = os.path.join(home, "Área de Trabalho")
-    if os.path.exists(desktop_pt):
-        return desktop_pt
-    # Se nada funcionar, usa a home
+
+    # Lista de caminhos possíveis para o Desktop, incluindo OneDrive
+    caminhos = [
+        os.path.join(home, "Desktop"),
+        os.path.join(home, "Área de Trabalho"),
+        os.path.join(home, "OneDrive", "Desktop"),
+        os.path.join(home, "OneDrive", "Área de Trabalho"),
+        os.path.join(home, "OneDrive - Personal", "Desktop"),
+        os.path.join(home, "OneDrive - Personal", "Área de Trabalho"),
+    ]
+
+    for caminho in caminhos:
+        if os.path.exists(caminho):
+            return caminho
+
     return home
 
 DIRETORIO_SAIDA = os.path.join(obter_desktop(), "Relatório de Acessos")
@@ -282,6 +288,8 @@ class BioMonitorThread(threading.Thread):
         self.page = None
 
     def run(self):
+        # Garante criação da pasta antes de iniciar
+        os.makedirs(DIRETORIO_FOTOS, exist_ok=True)
         with sync_playwright() as p:
             try:
                 # Tenta iniciar navegador (Visível a pedido do usuário)
