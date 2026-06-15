@@ -14,7 +14,27 @@ USUARIO = "armando.campos"
 SENHA = "armandocampos.1"
 
 # Diretórios para salvar os relatórios e imagens extraídas
-DIRETORIO_SAIDA = "relatorio_acessos"
+def obter_desktop():
+    """Retorna o caminho da área de trabalho de forma multiplataforma."""
+    home = os.path.expanduser("~")
+
+    # Lista de caminhos possíveis para o Desktop, incluindo OneDrive
+    caminhos = [
+        os.path.join(home, "Desktop"),
+        os.path.join(home, "Área de Trabalho"),
+        os.path.join(home, "OneDrive", "Desktop"),
+        os.path.join(home, "OneDrive", "Área de Trabalho"),
+        os.path.join(home, "OneDrive - Personal", "Desktop"),
+        os.path.join(home, "OneDrive - Personal", "Área de Trabalho"),
+    ]
+
+    for caminho in caminhos:
+        if os.path.exists(caminho):
+            return caminho
+
+    return home
+
+DIRETORIO_SAIDA = os.path.join(obter_desktop(), "Relatório de Acessos")
 DIRETORIO_FOTOS = os.path.join(DIRETORIO_SAIDA, "fotos")
 ARQUIVO_CSV = os.path.join(DIRETORIO_SAIDA, "historico_acessos.csv")
 ARQUIVO_HTML = os.path.join(DIRETORIO_SAIDA, "relatorio_visual.html")
@@ -533,6 +553,8 @@ def extrair_linhas_tabela_real(frame):
 
 
 def executar_monitoramento():
+    # Garante que a pasta de saída exista
+    os.makedirs(DIRETORIO_FOTOS, exist_ok=True)
     inicializar_arquivos()
     
     largura, altura = obter_resolucao_tela()
