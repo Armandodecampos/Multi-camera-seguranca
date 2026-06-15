@@ -15,31 +15,43 @@ SENHA = "armandocampos.1"
 
 # Diretórios para salvar os relatórios e imagens extraídas
 def obter_desktop():
-    """Retorna o caminho da área de trabalho de forma multiplataforma."""
+    """Retorna o caminho da área de trabalho de forma robusta."""
     home = os.path.expanduser("~")
+    # Tenta detectar o sistema para usar APIs específicas se possível
+    import platform
+    sistema = platform.system()
 
-    # Lista de caminhos possíveis para o Desktop, incluindo OneDrive
-    caminhos = [
-        os.path.join(home, "Desktop"),
-        os.path.join(home, "Área de Trabalho"),
-        os.path.join(home, "OneDrive", "Desktop"),
-        os.path.join(home, "OneDrive", "Área de Trabalho"),
-        os.path.join(home, "OneDrive - Personal", "Desktop"),
-        os.path.join(home, "OneDrive - Personal", "Área de Trabalho"),
-    ]
+    if sistema == "Windows":
+        try:
+            import ctypes
+            from ctypes import wintypes
+            # CSIDL_DESKTOP = 0x0000
+            path_buf = ctypes.create_unicode_buffer(wintypes.MAX_PATH)
+            ctypes.windll.shell32.SHGetFolderPathW(None, 0, None, 0, path_buf)
+            return path_buf.value
+        except Exception:
+            # Fallback manual para Windows com OneDrive
+            for folder in ["Desktop", "OneDrive/Desktop", "Área de Trabalho", "OneDrive/Área de Trabalho"]:
+                caminho = os.path.join(home, folder.replace("/", os.sep))
+                if os.path.exists(caminho):
+                    return caminho
+            return os.path.join(home, "Desktop")
 
-    for caminho in caminhos:
+    # Linux / macOS
+    for folder in ["Desktop", "Área de Trabalho"]:
+        caminho = os.path.join(home, folder)
         if os.path.exists(caminho):
             return caminho
+    return os.path.join(home, "Desktop")
 
-    return home
-
-DIRETORIO_SAIDA = os.path.join(obter_desktop(), "Relatório de Acessos")
+DIRETORIO_SAIDA = os.path.join(obter_desktop(), "Relatorio_Acessos")
 DIRETORIO_FOTOS = os.path.join(DIRETORIO_SAIDA, "fotos")
 ARQUIVO_CSV = os.path.join(DIRETORIO_SAIDA, "historico_acessos.csv")
 ARQUIVO_HTML = os.path.join(DIRETORIO_SAIDA, "relatorio_visual.html")
 
 # Cria as pastas caso não existam
+print(f"[*] BIO: Pasta de saída configurada em: {DIRETORIO_SAIDA}")
+os.makedirs(DIRETORIO_SAIDA, exist_ok=True)
 os.makedirs(DIRETORIO_FOTOS, exist_ok=True)
 
 # Global para sincronizar a data do sistema de monitoramento
@@ -554,6 +566,7 @@ def extrair_linhas_tabela_real(frame):
 
 def executar_monitoramento():
     # Garante que a pasta de saída exista
+    os.makedirs(DIRETORIO_SAIDA, exist_ok=True)
     os.makedirs(DIRETORIO_FOTOS, exist_ok=True)
     inicializar_arquivos()
     
