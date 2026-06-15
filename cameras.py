@@ -99,6 +99,8 @@ sem_conexao = threading.Semaphore(20)
 
 # Global para sincronizar a data do sistema de monitoramento biométrico
 DATA_SISTEMA_ATUAL = datetime.now().strftime("%Y-%m-%d")
+ULTIMA_ATUALIZACAO_RELATORIO = 0
+INTERVALO_ATUALIZACAO_HTML = 10 # Segundos
 
 def normalizar_data(data_str):
     """Garante que a data esteja no formato YYYY-MM-DD HH:MM:SS."""
@@ -186,7 +188,13 @@ def registrar_evento(id_usuario, nome, evento, dispositivo, leitor, data_evento,
     }
 
     print(f"[+] BIO: Evento {id_usuario} - {nome}")
-    atualizar_relatorio_html()
+
+    # Throttle: Atualiza o HTML periodicamente para economizar CPU/Disco
+    global ULTIMA_ATUALIZACAO_RELATORIO
+    agora = time.time()
+    if agora - ULTIMA_ATUALIZACAO_RELATORIO > INTERVALO_ATUALIZACAO_HTML:
+        atualizar_relatorio_html()
+        ULTIMA_ATUALIZACAO_RELATORIO = agora
 
     # Notifica a UI
     if queue_ui:
@@ -351,6 +359,9 @@ class BioMonitorThread(threading.Thread):
         ultimos_eventos_processados = collections.deque(maxlen=2000)
         eventos_com_foto_processados = collections.deque(maxlen=2000)
 
+        # Cache de conteúdo dos frames para evitar processamento se nada mudou
+        cache_html_fontes = {} # {id(fonte): hash/content}
+
         while self.rodando:
             try:
                 # Verifica se fomos deslogados (redirecionados para bioLogin.do)
@@ -374,8 +385,19 @@ class BioMonitorThread(threading.Thread):
                 for fonte in fontes:
                     try:
                         # Filtro de URL para evitar processar frames irrelevantes
-                        if "192.168.7.9" not in fonte.url and "about:blank" not in fonte.url:
+                        url_fonte = fonte.url
+                        if "192.168.7.9" not in url_fonte and "about:blank" not in url_fonte:
                             continue
+
+                        # Otimização: Verifica se o conteúdo do frame mudou antes de processar
+                        try:
+                            html_atual = fonte.content()
+                            # Se o conteúdo for o mesmo do loop anterior, pula processamento pesado
+                            if cache_html_fontes.get(id(fonte)) == html_atual:
+                                continue
+                            cache_html_fontes[id(fonte)] = html_atual
+                        except:
+                            pass
 
                         # --- ORIGEM 1: VARREDURA DIRETA NA TABELA REAL ---
                         linhas_tabela = self.extrair_linhas_tabela_real(fonte)
@@ -586,6 +608,56 @@ def carregar_dados_sistema():
     print("SISTEMA PRONTO. ABRINDO INTERFACE...")
     print("="*50)
     return dados
+
+# --- THREAD DE GRAVAÇÃO DE MOSAICO ---
+class MosaicoRecorderThread(threading.Thread):
+    def __init__(self, caminho_video, fps, parent):
+        super().__init__(daemon=True)
+        self.caminho_video = caminho_video
+        self.fps = fps
+        self.parent = parent
+        self.rodando = True
+        self.video_writer = None
+
+    def run(self):
+        print(f"[*] BIO: Thread de gravação total iniciada: {self.caminho_video}")
+        intervalo = 1.0 / self.fps
+        proximo_frame = time.time()
+
+        while self.rodando:
+            agora = time.time()
+            if agora >= proximo_frame:
+                try:
+                    # Gera o mosaico fora da thread principal
+                    cap_img = self.parent.gerar_frame_mosaico_completo()
+                    frame_bgr = cv2.cvtColor(np.array(cap_img), cv2.COLOR_RGB2BGR)
+                    h, w = frame_bgr.shape[:2]
+
+                    if self.video_writer is None:
+                        fourcc = cv2.VideoWriter_fourcc(*'XVID')
+                        self.video_writer = cv2.VideoWriter(self.caminho_video, fourcc, self.fps, (w, h))
+                        print(f"[*] BIO: VideoWriter Total iniciado {w}x{h}")
+
+                    if self.video_writer:
+                        self.video_writer.write(frame_bgr)
+
+                    proximo_frame += intervalo
+                    # Se atrasar muito, pula frames para manter o tempo real
+                    if agora > proximo_frame + intervalo:
+                        proximo_frame = agora + intervalo
+                except Exception as e:
+                    print(f"[-] BIO: Erro na gravação total (Thread): {e}")
+                    time.sleep(0.1)
+            else:
+                time.sleep(0.01)
+
+        if self.video_writer:
+            self.video_writer.release()
+            self.video_writer = None
+        print("[*] BIO: Thread de gravação total finalizada.")
+
+    def parar(self):
+        self.rodando = False
 
 # --- CLASSE DE VÍDEO OTIMIZADA ---
 class CameraHandler:
@@ -990,10 +1062,13 @@ class CentralMonitoramento(ctk.CTk):
         self.predefinicoes_desbloqueadas = set()
         self.gravando_tudo = False
         self.tamanho_gravacao_tudo = None
-        self.video_writer_tudo = None
+        self.recorder_tudo_thread = None
         self.caminho_video_tudo = None
         self.ultimo_frame_tudo_tempo = 0
         self.fps_tudo = 10
+
+        # Lock para proteger acesso a dados compartilhados com a thread de gravação
+        self.lock_shared = threading.Lock()
 
         # Buffer de eventos para gravação total
         self.bio_events_buffer = collections.deque(maxlen=10)
@@ -1330,7 +1405,8 @@ class CentralMonitoramento(ctk.CTk):
                 msg = self.queue_bio.get_nowait()
                 if msg.get("type") == "BIO_EVENT":
                     self.adicionar_card_evento(msg["data"])
-                    self.bio_events_buffer.appendleft(msg["data"])
+                    with self.lock_shared:
+                        self.bio_events_buffer.appendleft(msg["data"])
                     self._painel_bio_dirty = True
                 elif msg.get("type") == "BIO_STOPPED":
                     self.btn_iniciar_bio.configure(state="normal", text="Iniciar", fg_color=self.GRAY_DARK)
@@ -1872,9 +1948,9 @@ class CentralMonitoramento(ctk.CTk):
             if h != "CONECTANDO":
                 h.parar_gravacao()
 
-        if self.video_writer_tudo:
-            self.video_writer_tudo.release()
-            self.video_writer_tudo = None
+        if self.recorder_tudo_thread:
+            self.recorder_tudo_thread.parar()
+            self.recorder_tudo_thread = None
 
         # Para monitoramento biométrico
         if hasattr(self, 'bio_thread'):
@@ -2347,10 +2423,14 @@ class CentralMonitoramento(ctk.CTk):
             self.atualizar_botoes_controle()
             self.abrir_modal_alerta("Sucesso", "Gravação finalizada e salva em Downloads.", show_open_folder=True)
 
-    def renderizar_painel_biometria(self, largura, altura):
+    def renderizar_painel_biometria(self, largura, altura, events_snapshot=None):
         """Renderiza uma imagem PIL com os logs biométricos recentes."""
-        if not self._painel_bio_dirty and self._painel_bio_cache:
-            return self._painel_bio_cache
+        # Se não passarem um snapshot, usa o buffer atual (com lock)
+        if events_snapshot is None:
+            if not self._painel_bio_dirty and self._painel_bio_cache:
+                return self._painel_bio_cache
+            with self.lock_shared:
+                events_snapshot = list(self.bio_events_buffer)
 
         img = Image.new('RGB', (largura, altura), self.BG_SIDEBAR)
         draw = ImageDraw.Draw(img)
@@ -2367,7 +2447,7 @@ class CentralMonitoramento(ctk.CTk):
         draw.text((largura//2, 20), "REGISTROS BIOMÉTRICOS", fill=self.ACCENT_RED, font=f_bold, anchor="mm")
 
         y_cursor = 50
-        for evento in self.bio_events_buffer:
+        for evento in events_snapshot:
             if y_cursor + 100 > altura: break
 
             # Card background
@@ -2398,15 +2478,19 @@ class CentralMonitoramento(ctk.CTk):
 
     def gerar_frame_mosaico_completo(self):
         """Gera um mosaico manual das câmeras + painel de biometria."""
-        # Dimensões base: 1280x720 para o mosaico (ou o que for necessário)
-        # Vamos usar 4x5 cameras (ou 5x8) + painel lateral de 300px
-        cols, rows = self.grid_cols, self.grid_rows
+        # Captura snapshot dos dados para evitar conflitos de thread e acesso a UI
+        with self.lock_shared:
+            grid_snapshot = list(self.grid_cameras)
+            handlers_snapshot = dict(self.camera_handlers)
+            events_snapshot = list(self.bio_events_buffer)
+            cols = self.grid_cols
+            rows = self.grid_rows
+            num_slots = self.num_slots
+
         slot_w, slot_h = 320, 240
         bio_w = 300
-
         mosaico_w = cols * slot_w
         mosaico_h = rows * slot_h
-
         total_w = mosaico_w + bio_w
         total_h = mosaico_h
 
@@ -2414,13 +2498,14 @@ class CentralMonitoramento(ctk.CTk):
         canvas = Image.new('RGB', (total_w, total_h), self.BG_MAIN)
 
         # 1. Cola câmeras
-        for i in range(self.num_slots):
-            ip = self.grid_cameras[i]
+        for i in range(num_slots):
+            ip = grid_snapshot[i]
             r, c = i // cols, i % cols
 
-            handler = self.camera_handlers.get(ip)
+            handler = handlers_snapshot.get(ip)
             if handler and handler != "CONECTANDO" and handler.frame_pil:
                 with handler.lock:
+                    # Resize ainda é necessário para o mosaico; ocorre na thread de gravação
                     cam_img = handler.frame_pil.resize((slot_w, slot_h), Image.NEAREST)
                 canvas.paste(cam_img, (c*slot_w, r*slot_h))
             else:
@@ -2430,8 +2515,8 @@ class CentralMonitoramento(ctk.CTk):
                 if ip and ip != "0.0.0.0":
                     draw.text((c*slot_w + 10, r*slot_h + 10), f"OFFLINE\n{ip}", fill="gray")
 
-        # 2. Gera e cola painel de biometria
-        bio_panel = self.renderizar_painel_biometria(bio_w, total_h)
+        # 2. Gera e cola painel de biometria usando o snapshot
+        bio_panel = self.renderizar_painel_biometria(bio_w, total_h, events_snapshot=events_snapshot)
         canvas.paste(bio_panel, (mosaico_w, 0))
 
         return canvas
@@ -2449,16 +2534,21 @@ class CentralMonitoramento(ctk.CTk):
 
                 self.gravando_tudo = True
                 self.tamanho_gravacao_tudo = None
+
+                self.recorder_tudo_thread = MosaicoRecorderThread(self.caminho_video_tudo, self.fps_tudo, self)
+                self.recorder_tudo_thread.start()
+
                 self.btn_gravar_tudo.configure(text="Parar Gravação Total", fg_color=self.ACCENT_RED)
-                print(f"Gravação TOTAL iniciada: {self.caminho_video_tudo}")
+                print(f"Gravação TOTAL iniciada (Background): {self.caminho_video_tudo}")
             except Exception as e:
                 self.abrir_modal_alerta("Erro", f"Não foi possível iniciar a gravação total: {e}")
         else:
             # Parar Gravação Total
             self.gravando_tudo = False
-            if self.video_writer_tudo:
-                self.video_writer_tudo.release()
-                self.video_writer_tudo = None
+            if self.recorder_tudo_thread:
+                self.recorder_tudo_thread.parar()
+                self.recorder_tudo_thread = None
+
             self.btn_gravar_tudo.configure(text="Gravar Tudo", fg_color=self.GRAY_DARK)
             self.abrir_modal_alerta("Sucesso", "Gravação total finalizada e salva em Downloads.", show_open_folder=True)
 
@@ -2732,6 +2822,13 @@ class CentralMonitoramento(ctk.CTk):
     def atribuir_ip_ao_slot(self, idx, ip, atualizar_ui=True, gerenciar_conexoes=True, salvar=True, forcado=False):
         if not (0 <= idx < self.num_slots): return
 
+        with self.lock_shared:
+            ip_antigo = self.grid_cameras[idx]
+            self.grid_cameras[idx] = ip
+            # Sincroniza com o Grid Virtual
+            r, c = idx // self.grid_cols, idx % self.grid_cols
+            self.virtual_grid[(r + self.offset_y, c + self.offset_x)] = ip
+
         # Limpa predefinição ao atribuir manualmente (se for uma atribuição direta, não via aplicar_predefinicao)
         # Note: 'aplicar_predefinicao' chama atribuir_ip_ao_slot com gerenciar_conexoes=False
         if gerenciar_conexoes and self.ultima_predefinicao:
@@ -2739,15 +2836,8 @@ class CentralMonitoramento(ctk.CTk):
             self.ultima_predefinicao = None
 
         # Otimização: se o IP for o mesmo, não faz nada (a menos que seja 0.0.0.0 ou forçado)
-        if not forcado and ip != "0.0.0.0" and self.grid_cameras[idx] == ip:
+        if not forcado and ip != "0.0.0.0" and ip_antigo == ip:
             return
-
-        ip_antigo = self.grid_cameras[idx]
-        self.grid_cameras[idx] = ip
-        
-        # Sincroniza com o Grid Virtual
-        r, c = idx // self.grid_cols, idx % self.grid_cols
-        self.virtual_grid[(r + self.offset_y, c + self.offset_x)] = ip
 
         # 1. Limpeza visual ultra-robusta
         # Só mostra IP se for o slot selecionado
@@ -3095,28 +3185,7 @@ class CentralMonitoramento(ctk.CTk):
                     # print(f"Erro render slot {i}: {e}")
                     pass
 
-            # Lógica de Gravação Total (Mosaico Manual)
-            if self.gravando_tudo:
-                agora_rec = time.time()
-                if agora_rec - self.ultimo_frame_tudo_tempo >= (1.0 / self.fps_tudo):
-                    try:
-                        # Gera o frame manualmente (independente do estado da janela ou oclusão)
-                        cap_img = self.gerar_frame_mosaico_completo()
-                        frame_bgr = cv2.cvtColor(np.array(cap_img), cv2.COLOR_RGB2BGR)
-                        h_final, w_final = frame_bgr.shape[:2]
-
-                        # Inicializa VideoWriter se necessário
-                        if self.video_writer_tudo is None:
-                            print(f"GRAVAR TUDO: Iniciando {w_final}x{h_final} (Format: AVI/XVID)")
-                            fourcc = cv2.VideoWriter_fourcc(*'XVID')
-                            self.video_writer_tudo = cv2.VideoWriter(self.caminho_video_tudo, fourcc, self.fps_tudo, (w_final, h_final))
-                            self.tamanho_gravacao_tudo = (w_final, h_final)
-
-                        if self.video_writer_tudo is not None:
-                            self.video_writer_tudo.write(frame_bgr)
-                        self.ultimo_frame_tudo_tempo = agora_rec
-                    except Exception as e:
-                        print(f"Erro na gravação total manual: {e}")
+            # A gravação total agora é processada de forma assíncrona em MosaicoRecorderThread
 
         except Exception as e:
             # print(f"Erro no loop de exibicao: {e}")
