@@ -1098,6 +1098,7 @@ class CentralMonitoramento(ctk.CTk):
         self.iconic_state = False
         self.zoom_stop_timer = None
         self.ctrl_pressionado = False
+        self._id_atualizacao_lista = 0
         self.predefinicoes_desbloqueadas = set()
         self.gravando_tudo = False
         self.tamanho_gravacao_tudo = None
@@ -3554,33 +3555,50 @@ class CentralMonitoramento(ctk.CTk):
         # Pequeno delay para garantir que o scroll_frame e sidebar tenham dimensões reais
         self.after(10, self._atualizar_lista_cameras_ui_impl)
 
-    def _atualizar_lista_cameras_ui_impl(self):
-        for child in self.scroll_frame.winfo_children():
-            child.destroy()
-        self.botoes_referencia = {}
+    def _atualizar_lista_cameras_ui_impl(self, ips_pendentes=None, id_chamada=None):
+        """Popula a lista de câmeras na sidebar de forma assíncrona (Batching)."""
+        if ips_pendentes is None:
+            # Gera novo ID para esta atualização e cancela anteriores (Race Condition guard)
+            self._id_atualizacao_lista += 1
+            id_chamada = self._id_atualizacao_lista
+
+            for child in self.scroll_frame.winfo_children():
+                child.destroy()
+            self.botoes_referencia = {}
+            ips_pendentes = self.obter_ips_ordenados()
+            self._start_time_lista = time.time()
+
+        # Se esta chamada não for mais a atual, interrompe o loop de batches
+        if id_chamada != self._id_atualizacao_lista:
+            return
+
+        if not ips_pendentes:
+            duracao = time.time() - getattr(self, '_start_time_lista', time.time())
+            print(f"SISTEMA: Lista de câmeras finalizada em {duracao:.2f}s")
+            self.filtrar_lista()
+            return
+
+        # Processa em lotes de 20 para manter a UI responsiva
+        lote = ips_pendentes[:20]
+        resto = ips_pendentes[20:]
 
         largura_sidebar = self.sidebar.winfo_width()
-        if largura_sidebar <= 1:
-            largura_sidebar = 320
+        if largura_sidebar <= 1: largura_sidebar = 320
 
-        # Configurações de tamanho baseadas na preferência
         if self.tamanho_preview == "Grande":
-            thumb_size = (200, 140)
-            pack_side = "top"
+            thumb_size, pack_side = (200, 140), "top"
             wrap_val = max(100, largura_sidebar - 40)
-        else: # Pequeno
-            thumb_size = (100, 70)
-            pack_side = "left"
+        else:
+            thumb_size, pack_side = (100, 70), "left"
             wrap_val = max(100, largura_sidebar - 210)
 
-        for ip in self.obter_ips_ordenados():
+        for ip in lote:
             lbl_thumb = None
             nome = self.dados_cameras.get(ip, f"IP {ip}")
             cor = self.ACCENT_WINE if ip == self.ip_selecionado else self.BG_SIDEBAR
             frm = ctk.CTkFrame(self.scroll_frame, fg_color=cor, border_width=0, border_color=self.GRAY_DARK)
             frm.pack(fill="x", pady=2)
 
-            # Miniatura (Thumbnail)
             caminho_print = os.path.join(self.diretorio_prints, f"{ip.replace('.', '_')}.png")
             if os.path.exists(caminho_print):
                 try:
@@ -3590,29 +3608,21 @@ class CentralMonitoramento(ctk.CTk):
                     lbl_thumb.pack(side=pack_side, padx=2, pady=2)
                 except: pass
 
-            # Container para o texto (Label)
             txt_container = ctk.CTkFrame(frm, fg_color="transparent")
             txt_container.pack(side=pack_side, fill="both", expand=True, pady=5)
 
-            # Cálculo aproximado de wraplength baseado na largura da sidebar
-            # Reduzido para garantir que não corte e forçar o wrap mais cedo
             lbl_nome = ctk.CTkLabel(txt_container, text=nome, font=("Roboto", 12, "bold"),
                                     text_color=self.TEXT_P, anchor="w", justify="left",
                                     wraplength=wrap_val, width=wrap_val, height=0)
             lbl_nome.pack(fill="x", padx=10, pady=(2, 2))
 
-            # Força wraplength no label interno do tkinter (customtkinter às vezes não aplica corretamente)
-            try:
-                lbl_nome.update_idletasks()
-                lbl_nome._label.configure(wraplength=wrap_val)
-            except: pass
+            # Otimização: removemos update_idletasks() daqui, pois o batching já resolve a fluidez
+
             lbl_ip = ctk.CTkLabel(txt_container, text=ip, font=("Roboto", 11), text_color=self.TEXT_S, anchor="w")
             lbl_ip.pack(fill="x", padx=10, pady=(0, 4))
 
-
             widgets_para_bind = [txt_container, lbl_nome, lbl_ip]
-            if lbl_thumb:
-                widgets_para_bind.append(lbl_thumb)
+            if lbl_thumb: widgets_para_bind.append(lbl_thumb)
 
             for widget in widgets_para_bind:
                 widget.bind("<Button-1>", lambda e, x=ip: self.ao_pressionar_sidebar(e, x))
@@ -3622,8 +3632,13 @@ class CentralMonitoramento(ctk.CTk):
 
             self.botoes_referencia[ip] = {'frame': frm, 'lbl_nome': lbl_nome, 'lbl_ip': lbl_ip}
 
-        self.filtrar_lista()
+        # Agenda o próximo lote
+        self.after(5, lambda: self._atualizar_lista_cameras_ui_impl(resto, id_chamada))
 
+        if not resto:
+            self.finalizar_atualizacao_lista()
+
+    def finalizar_atualizacao_lista(self):
         # Força o scroll frame a recalcular sua região interna para evitar cortes
         # Realiza múltiplas tentativas para garantir que o layout foi processado
         def fix_scroll():
