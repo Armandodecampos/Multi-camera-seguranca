@@ -87,8 +87,8 @@ def carregar_cache_bio():
         except Exception as e:
             print(f"[-] BIO: Erro ao carregar cache: {e}")
 
-# Inicializa o cache
-carregar_cache_bio()
+# Inicializa o cache em background para não travar a inicialização do script
+threading.Thread(target=carregar_cache_bio, daemon=True).start()
 
 # Configuração de baixa latência para OpenCV/FFMPEG
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp;stimeout;3000000;buffer_size;2048000;analyzeduration;50000;probesize;50000;fflags;discardcorrupt;max_delay;500000;reorder_queue_size;16;rtsp_flags;prefer_tcp;reconnect;1;reconnect_streamed;1;reconnect_at_eof;1;allowed_media_types;video"
@@ -1099,6 +1099,7 @@ class CentralMonitoramento(ctk.CTk):
         self.zoom_stop_timer = None
         self.ctrl_pressionado = False
         self._id_atualizacao_lista = 0
+        self._id_atualizacao_predefinicoes = 0
         self.predefinicoes_desbloqueadas = set()
         self.gravando_tudo = False
         self.tamanho_gravacao_tudo = None
@@ -3551,7 +3552,6 @@ class CentralMonitoramento(ctk.CTk):
             pass
 
     def atualizar_lista_cameras_ui(self):
-        self.update_idletasks()
         # Pequeno delay para garantir que o scroll_frame e sidebar tenham dimensões reais
         self.after(10, self._atualizar_lista_cameras_ui_impl)
 
@@ -3967,35 +3967,44 @@ class CentralMonitoramento(ctk.CTk):
                                on_name_entered, valor_inicial=nome_antigo)
 
     def atualizar_lista_predefinicoes_ui(self):
-        self.update_idletasks()
         self.after(10, self._atualizar_lista_predefinicoes_ui_impl)
 
-    def _atualizar_lista_predefinicoes_ui_impl(self):
-        for child in self.scroll_predefinicoes.winfo_children():
-            child.destroy()
-        self.predefinicao_widgets = {}
+    def _atualizar_lista_predefinicoes_ui_impl(self, nomes_pendentes=None, id_chamada=None):
+        """Popula a lista de predefinições na sidebar de forma assíncrona (Batching)."""
+        if nomes_pendentes is None:
+            self._id_atualizacao_predefinicoes += 1
+            id_chamada = self._id_atualizacao_predefinicoes
+
+            for child in self.scroll_predefinicoes.winfo_children():
+                child.destroy()
+            self.predefinicao_widgets = {}
+            nomes_pendentes = sorted(self.predefinicoes.keys(), key=str.lower)
+
+        if id_chamada != self._id_atualizacao_predefinicoes:
+            return
+
+        if not nomes_pendentes:
+            return
+
+        lote = nomes_pendentes[:10]
+        resto = nomes_pendentes[10:]
 
         largura_sidebar = self.sidebar.winfo_width()
-        if largura_sidebar <= 1:
-            largura_sidebar = 320
+        if largura_sidebar <= 1: largura_sidebar = 320
 
-        for nome in sorted(self.predefinicoes.keys(), key=str.lower):
+        for nome in lote:
             dados = self.predefinicoes.get(nome, {})
-            is_adm = False
-            if isinstance(dados, dict):
-                is_adm = dados.get("is_adm", False)
+            is_adm = isinstance(dados, dict) and dados.get("is_adm", False)
 
             cor = self.ACCENT_WINE if nome == self.ultima_predefinicao else self.BG_SIDEBAR
             frm = ctk.CTkFrame(self.scroll_predefinicoes, fg_color=cor, border_width=0, border_color=self.GRAY_DARK)
             frm.pack(fill="x", pady=2, padx=2)
 
-            # Bind no Frame para facilitar o clique
             frm.bind("<Button-1>", lambda e, n=nome: self.aplicar_predefinicao(n))
             frm.configure(cursor="hand2")
 
             is_desbloqueada = nome in self.predefinicoes_desbloqueadas
 
-            # Botões de Controle (Ordem: X, ✎, 💾 - pack no lado direito)
             if not is_adm or is_desbloqueada:
                 btn_del = ctk.CTkButton(frm, text="X", width=30, height=30, fg_color="transparent",
                                          text_color=self.TEXT_S, hover_color=self.ACCENT_RED,
@@ -4012,7 +4021,6 @@ class CentralMonitoramento(ctk.CTk):
                                           command=lambda n=nome: self.sobrescrever_predefinicao(n))
                 btn_save.pack(side="right", padx=2)
 
-            # Ícone de Cadeado para Predefinições Adm
             if is_adm:
                 cadeado_icon = "🔓" if is_desbloqueada else "🔒"
                 btn_lock = ctk.CTkButton(frm, text=cadeado_icon, width=30, height=30, fg_color="transparent",
@@ -4020,21 +4028,18 @@ class CentralMonitoramento(ctk.CTk):
                                           command=lambda n=nome: self.toggle_lock_predefinicao(n))
                 btn_lock.pack(side="left", padx=(5, 0))
 
-            # Label de Nome (Expandível)
             offset_wrap = 190 if is_adm else 160
             wrap_val = max(100, largura_sidebar - offset_wrap)
             lbl = ctk.CTkLabel(frm, text=nome, font=("Roboto", 12, "bold"), text_color=self.TEXT_P,
                                anchor="w", cursor="hand2", wraplength=wrap_val, width=wrap_val, justify="left", height=0)
             lbl.pack(side="left", expand=True, fill="both", padx=10, pady=10)
 
-            # Força wraplength no label interno
-            try:
-                lbl.update_idletasks()
-                lbl._label.configure(wraplength=wrap_val)
-            except: pass
+            # Otimização: removemos update_idletasks() para evitar gargalos
             lbl.bind("<Button-1>", lambda e, n=nome: self.aplicar_predefinicao(n))
 
             self.predefinicao_widgets[nome] = frm
+
+        self.after(5, lambda: self._atualizar_lista_predefinicoes_ui_impl(resto, id_chamada))
 
     def abrir_pasta_downloads(self):
         downloads_dir = os.path.join(os.path.expanduser("~"), "Downloads")
