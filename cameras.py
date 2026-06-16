@@ -782,23 +782,49 @@ class CameraHandler:
 
         while self.rodando:
             if self.necessita_reconexao:
+                # Captura URL e libera CAP anterior sem travar o lock por muito tempo
                 with self.lock:
-                    print(f"Alterando canal de {self.ip_display} para {self.canal}...")
-                    if self.cap: self.cap.release()
-                    with sem_conexao:
-                        self.cap = cv2.VideoCapture(self.url, cv2.CAP_FFMPEG)
-                    if hasattr(cv2, 'CAP_PROP_BUFFERSIZE'):
-                        try: self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 3)
-                        except: pass
+                    url_reconexao = self.url
+                    old_cap = self.cap
+                    self.cap = None
+
+                print(f"Alterando canal de {self.ip_display} para {self.canal}...")
+                if old_cap:
+                    try:
+                        start_r = time.time()
+                        old_cap.release()
+                        end_r = time.time()
+                        if end_r - start_r > 0.2:
+                            print(f"LOG: Release {self.ip_display} levou {end_r - start_r:.2f}s")
+                    except: pass
+
+                new_cap = None
+                with sem_conexao:
+                    start_t = time.time()
+                    new_cap = cv2.VideoCapture(url_reconexao, cv2.CAP_FFMPEG)
+                    end_t = time.time()
+                    if end_t - start_t > 0.5:
+                        print(f"LOG: Reconexão {self.ip_display} levou {end_t - start_t:.2f}s")
+
+                if new_cap and hasattr(cv2, 'CAP_PROP_BUFFERSIZE'):
+                    try: new_cap.set(cv2.CAP_PROP_BUFFERSIZE, 3)
+                    except: pass
+
+                with self.lock:
+                    self.cap = new_cap
                     self.necessita_reconexao = False
                     consecutive_failures = 0
 
-            if not self.cap or not self.cap.isOpened():
+            # Uso seguro do CAP localmente para evitar bloqueio da UI
+            with self.lock:
+                current_cap = self.cap
+
+            if not current_cap or not current_cap.isOpened():
                 time.sleep(0.5)
                 continue
 
             # Grab frame (rápido, não decodifica)
-            ret = self.cap.grab()
+            ret = current_cap.grab()
 
             if ret:
                 consecutive_failures = 0
@@ -816,7 +842,7 @@ class CameraHandler:
                         continue
 
                 # Retrieve frame (decodifica) - Mantemos o buffer limpo mesmo se não visível
-                ret_ret, frame = self.cap.retrieve()
+                ret_ret, frame = current_cap.retrieve()
                 if not ret_ret:
                     continue
 
@@ -930,17 +956,30 @@ class CameraHandler:
                 consecutive_failures += 1
                 if consecutive_failures > 100: # Reduzido para 100 para reconectar mais rápido
                     print(f"LOG: Camera {self.ip_display} sem frames. Tentando reconectar...")
-                    if self.cap: self.cap.release()
+                    with self.lock:
+                        url_reconexao = self.url
+                        old_cap = self.cap
+                        self.cap = None
+
+                    if old_cap:
+                        try: old_cap.release()
+                        except: pass
+
                     with sem_conexao:
-                        self.cap = cv2.VideoCapture(self.url, cv2.CAP_FFMPEG)
+                        new_cap = cv2.VideoCapture(url_reconexao, cv2.CAP_FFMPEG)
+
+                    with self.lock:
+                        self.cap = new_cap
                     consecutive_failures = 0
 
                 # Sleep progressivo em caso de falha para evitar overhead de CPU
                 sleep_time = min(0.2, 0.01 * consecutive_failures)
                 time.sleep(sleep_time)
 
-        if self.cap:
-            self.cap.release()
+        with self.lock:
+            if self.cap:
+                self.cap.release()
+                self.cap = None
         if self.video_writer:
             self.video_writer.release()
             self.video_writer = None
