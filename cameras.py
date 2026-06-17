@@ -1239,6 +1239,17 @@ class CentralMonitoramento(ctk.CTk):
         self.sidebar = ctk.CTkFrame(self, width=320, corner_radius=0, fg_color=self.BG_SIDEBAR)
         self.sidebar.grid(row=0, column=0, sticky="nsew")
 
+        # Botão de Configurações
+        self.btn_config = ctk.CTkButton(self.sidebar, text="⚙ Configurações",
+                                         fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
+                                         command=self.abrir_janela_configuracoes)
+        self.btn_config.pack(pady=(10, 5), padx=10, fill="x")
+
+        self.btn_gravar_tudo = ctk.CTkButton(self.sidebar, text="Gravar Tudo",
+                                         fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
+                                         command=self.toggle_gravacao_tudo)
+        self.btn_gravar_tudo.pack(pady=(0, 10), padx=10, fill="x")
+
         self.tabview = ctk.CTkTabview(self.sidebar, fg_color="transparent",
                                       segmented_button_selected_color=self.ACCENT_RED,
                                       segmented_button_unselected_hover_color=self.ACCENT_WINE,
@@ -1252,17 +1263,6 @@ class CentralMonitoramento(ctk.CTk):
 
         # Seletor de IP Manual
         self.criar_seletor_ip(tab_cams)
-
-        # Botão de Configurações
-        self.btn_config = ctk.CTkButton(tab_cams, text="⚙ Configurações",
-                                         fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
-                                         command=self.abrir_janela_configuracoes)
-        self.btn_config.pack(pady=(10, 5), padx=10, fill="x")
-
-        self.btn_gravar_tudo = ctk.CTkButton(tab_cams, text="Gravar Tudo",
-                                         fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
-                                         command=self.toggle_gravacao_tudo)
-        self.btn_gravar_tudo.pack(pady=(0, 10), padx=10, fill="x")
 
         self.frame_busca = ctk.CTkFrame(tab_cams, fg_color="transparent")
         self.frame_busca.pack(fill="x", padx=5, pady=5)
