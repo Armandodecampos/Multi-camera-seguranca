@@ -1128,6 +1128,14 @@ class CentralMonitoramento(ctk.CTk):
         self._painel_bio_cache = None
         self._painel_bio_dirty = True
 
+        # Cache de fontes para PIL (evita recarregar a cada renderização)
+        try:
+            self._font_bio_bold = ImageFont.truetype("arialbd.ttf", 16)
+            self._font_bio_reg = ImageFont.truetype("arial.ttf", 12)
+        except:
+            self._font_bio_bold = ImageFont.load_default()
+            self._font_bio_reg = ImageFont.load_default()
+
         # Grid Virtual e Viewport
         self.virtual_grid = {}
         self.offset_x = 0
@@ -2502,12 +2510,9 @@ class CentralMonitoramento(ctk.CTk):
         img = Image.new('RGB', (largura, altura), self.BG_SIDEBAR)
         draw = ImageDraw.Draw(img)
 
-        try:
-            f_bold = ImageFont.truetype("arialbd.ttf", 16)
-            f_reg = ImageFont.truetype("arial.ttf", 12)
-        except:
-            f_bold = ImageFont.load_default()
-            f_reg = ImageFont.load_default()
+        # Usa fontes em cache para evitar I/O
+        f_bold = getattr(self, '_font_bio_bold', ImageFont.load_default())
+        f_reg = getattr(self, '_font_bio_reg', ImageFont.load_default())
 
         # Título
         draw.rectangle([0, 0, largura, 60], fill=self.BG_PANEL)
@@ -2523,13 +2528,23 @@ class CentralMonitoramento(ctk.CTk):
             draw.rectangle([10, y_cursor, largura-10, y_cursor+90], fill="#1a1a1a", outline="#333333")
             draw.rectangle([10, y_cursor, 13, y_cursor+90], fill=self.ACCENT_RED)
 
-            # Foto (ou placeholder)
+            # Foto (Usa a PIL já decodificada se disponível)
             x_txt = 20
-            if evento.get("foto"):
+            foto_pil = evento.get("foto_pil")
+
+            # Fallback se não estiver decodificada (não deveria acontecer com o novo sistema)
+            if not foto_pil and evento.get("foto"):
                 try:
                     img_data = base64.b64decode(evento["foto"].split(",")[1] if "," in evento["foto"] else evento["foto"])
-                    foto_pil = Image.open(io.BytesIO(img_data)).resize((70, 70))
-                    img.paste(foto_pil, (20, y_cursor+10))
+                    foto_pil = Image.open(io.BytesIO(img_data))
+                    evento["foto_pil"] = foto_pil # Cache no próprio evento
+                except: pass
+
+            if foto_pil:
+                try:
+                    # Redimensiona apenas para exibição no card
+                    foto_thumb = foto_pil.resize((70, 70), Image.NEAREST)
+                    img.paste(foto_thumb, (20, y_cursor+10))
                     x_txt = 100
                 except: pass
 
@@ -2572,11 +2587,16 @@ class CentralMonitoramento(ctk.CTk):
             r, c = i // cols, i % cols
 
             handler = handlers_snapshot.get(ip)
-            if handler and handler != "CONECTANDO" and handler.frame_pil:
+            cam_img_pil = None
+            if handler and handler != "CONECTANDO":
                 with handler.lock:
-                    # Resize ainda é necessário para o mosaico; ocorre na thread de gravação
-                    cam_img = handler.frame_pil.resize((slot_w, slot_h), Image.NEAREST)
-                canvas.paste(cam_img, (c*slot_w, r*slot_h))
+                    # Apenas pega a referência do objeto PIL sob o lock
+                    cam_img_pil = handler.frame_pil
+
+            if cam_img_pil:
+                # O processamento pesado de resize e paste ocorre FORA do lock do handler
+                cam_img_resized = cam_img_pil.resize((slot_w, slot_h), Image.NEAREST)
+                canvas.paste(cam_img_resized, (c*slot_w, r*slot_h))
             else:
                 # Slot vazio ou offline
                 draw = ImageDraw.Draw(canvas)
