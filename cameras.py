@@ -1158,6 +1158,7 @@ class CentralMonitoramento(ctk.CTk):
 
                 # Garante que tenha o número correto de slots
                 while len(self.grid_cameras) < self.num_slots: self.grid_cameras.append("0.0.0.0")
+                self.grid_cameras = self.grid_cameras[:self.num_slots]
                 self.ultima_predefinicao = primeira
             else:
                 self.grid_cameras = ["0.0.0.0"] * self.num_slots
@@ -1187,6 +1188,7 @@ class CentralMonitoramento(ctk.CTk):
                     self.grid_cameras = list(dados_primeira)
 
                 while len(self.grid_cameras) < self.num_slots: self.grid_cameras.append("0.0.0.0")
+                self.grid_cameras = self.grid_cameras[:self.num_slots]
                 self.ultima_predefinicao = primeira
             else:
                 self.grid_cameras = ["0.0.0.0"] * self.num_slots
