@@ -1023,15 +1023,21 @@ class CentralMonitoramento(ctk.CTk):
             num_slots = 20
 
         self.num_slots = num_slots
-        if num_slots <= 5:
-            self.grid_rows = 1
-            self.grid_cols = num_slots
-        elif num_slots <= 20:
-            self.grid_cols = 5
-            self.grid_rows = (num_slots + 4) // 5
-        else:
-            self.grid_cols = 8
-            self.grid_rows = (num_slots + 7) // 8
+
+        # Cálculo dinâmico para preservar o espaço retangular horizontal (proporção ~1.6)
+        melhor_r = 1
+        menor_dif = float('inf')
+        # Testa possíveis quantidades de linhas para encontrar a melhor proporção
+        for r in range(1, int(num_slots**0.5) + 2):
+            c = (num_slots + r - 1) // r
+            ratio = c / r
+            dif = abs(ratio - 1.6)
+            if dif < menor_dif:
+                menor_dif = dif
+                melhor_r = r
+
+        self.grid_rows = melhor_r
+        self.grid_cols = (num_slots + melhor_r - 1) // melhor_r
 
     def __init__(self, dados_iniciais=None):
         super().__init__()
@@ -2604,7 +2610,7 @@ class CentralMonitoramento(ctk.CTk):
     def abrir_janela_configuracoes(self):
         modal = ctk.CTkToplevel(self)
         modal.title("Configurações")
-        modal.geometry("400x480")
+        modal.geometry("400x420")
         modal.resizable(False, False)
         modal.attributes("-topmost", True)
 
@@ -2656,22 +2662,10 @@ class CentralMonitoramento(ctk.CTk):
             except ValueError:
                 self.abrir_modal_alerta("Erro", "Digite um número válido.")
 
-        btn_aplicar = ctk.CTkButton(frame_grid, text="Aplicar", width=80,
+        btn_aplicar = ctk.CTkButton(frame_grid, text="Aplicar", width=120,
                                      fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
                                      command=aplicar_custom_grid)
         btn_aplicar.pack(side="left")
-
-        # Atalhos rápidos
-        frame_atalhos = ctk.CTkFrame(modal, fg_color="transparent")
-        frame_atalhos.pack(pady=5, padx=20, fill="x")
-
-        ctk.CTkButton(frame_atalhos, text="Usar 20", width=100,
-                       fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
-                       command=lambda: [entry_grid.delete(0, 'end'), entry_grid.insert(0, "20"), aplicar_custom_grid()]).pack(side="left", padx=(0, 10))
-
-        ctk.CTkButton(frame_atalhos, text="Usar 40", width=100,
-                       fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
-                       command=lambda: [entry_grid.delete(0, 'end'), entry_grid.insert(0, "40"), aplicar_custom_grid()]).pack(side="left")
 
     def mudar_quantidade_slots(self, nova_qtd):
         """Altera a quantidade de slots do grid e reconstrói a interface."""
