@@ -196,6 +196,15 @@ def registrar_evento(id_usuario, nome, evento, dispositivo, leitor, data_evento,
         atualizar_relatorio_html()
         ULTIMA_ATUALIZACAO_RELATORIO = agora
 
+    # Decodifica para PIL no background para não travar a UI
+    foto_pil = None
+    if base64_foto:
+        try:
+            img_data = base64.b64decode(base64_foto.split(",")[1] if "," in base64_foto else base64_foto)
+            foto_pil = Image.open(io.BytesIO(img_data))
+        except:
+            pass
+
     # Notifica a UI
     if queue_ui:
         queue_ui.put({
@@ -207,7 +216,8 @@ def registrar_evento(id_usuario, nome, evento, dispositivo, leitor, data_evento,
                 "dispositivo": dispositivo,
                 "leitor": leitor,
                 "data_evento": data_evento,
-                "foto": base64_foto
+                "foto": base64_foto,
+                "foto_pil": foto_pil
             }
         })
 
@@ -442,7 +452,7 @@ class BioMonitorThread(threading.Thread):
                         # Log discreto para erros de frame
                         pass
 
-                self.page.wait_for_timeout(250)
+                self.page.wait_for_timeout(500)
             except Exception as e:
                 print(f"[-] BIO: Erro no loop de monitoramento: {e}")
                 # Se o erro for de conexão do Playwright, pode ser necessário reiniciar o browser (futura melhoria)
@@ -1448,9 +1458,12 @@ class CentralMonitoramento(ctk.CTk):
     def _processar_queue_bio(self):
         """Processa eventos biométricos vindos da thread de monitoramento."""
         try:
-            while not self.queue_bio.empty():
+            # Processa no máximo 3 eventos por ciclo da UI para evitar travamentos (Throttling)
+            processados = 0
+            while not self.queue_bio.empty() and processados < 3:
                 msg = self.queue_bio.get_nowait()
                 if msg.get("type") == "BIO_EVENT":
+                    processados += 1
                     self.adicionar_card_evento(msg["data"])
                     with self.lock_shared:
                         self.bio_events_buffer.appendleft(msg["data"])
@@ -1516,10 +1529,17 @@ class CentralMonitoramento(ctk.CTk):
         header_f.pack(fill="x")
 
         tem_foto = False
-        if dados.get("foto"):
+        img_pil = dados.get("foto_pil")
+
+        # Se não veio processado, tenta processar (fallback)
+        if not img_pil and dados.get("foto"):
             try:
                 img_data = base64.b64decode(dados["foto"].split(",")[1] if "," in dados["foto"] else dados["foto"])
                 img_pil = Image.open(io.BytesIO(img_data))
+            except: pass
+
+        if img_pil:
+            try:
                 img_ctk = ctk.CTkImage(img_pil, size=(100, 100))
                 lbl_img = ctk.CTkLabel(header_f, image=img_ctk, text="", width=100, height=100)
                 lbl_img.pack(side="left", padx=(0, 6))
