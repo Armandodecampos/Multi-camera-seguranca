@@ -1280,7 +1280,12 @@ class CentralMonitoramento(ctk.CTk):
         self.btn_add_cam = ctk.CTkButton(self.frame_busca, text="+", width=35,
                                           fg_color=self.ACCENT_WINE, hover_color=self.ACCENT_RED,
                                           command=lambda: self.solicitar_senha(self.abrir_modal_adicionar_camera))
-        self.btn_add_cam.pack(side="right")
+        self.btn_add_cam.pack(side="right", padx=(2, 0))
+
+        self.btn_salvar_layout_cam = ctk.CTkButton(self.frame_busca, text="💾", width=35,
+                                                fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
+                                                command=self.salvar_predefinicao_atual)
+        self.btn_salvar_layout_cam.pack(side="right", padx=2)
 
         self.scroll_frame = ctk.CTkScrollableFrame(tab_cams, fg_color=self.BG_LIST)
         self.scroll_frame.pack(expand=True, fill="both", padx=0, pady=5)
@@ -3031,6 +3036,18 @@ class CentralMonitoramento(ctk.CTk):
         finally:
             self.press_data = None
 
+    def exibir_menu_contexto_camera(self, event, ip):
+        menu = tk.Menu(self, tearoff=0, bg=self.BG_SIDEBAR, fg=self.TEXT_P, font=("Roboto", 10))
+        menu.add_command(label="Selecionar", command=lambda: self.selecionar_camera(ip))
+        menu.add_separator()
+        menu.add_command(label="Renomear", command=lambda: [self.selecionar_camera(ip), self.alternar_edicao_nome()])
+        menu.add_command(label="Excluir", command=lambda: self.solicitar_senha(lambda: self.confirmar_exclusao_camera_da_lista(ip)))
+
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
     def selecionar_camera(self, ip):
         # Esta função é chamada ao clicar na lista lateral
         if self.slot_selecionado is not None:
@@ -3707,6 +3724,7 @@ class CentralMonitoramento(ctk.CTk):
                 widget.bind("<Button-1>", lambda e, x=ip: self.ao_pressionar_sidebar(e, x))
                 widget.bind("<B1-Motion>", lambda e, x=ip: self.ao_arrastar_sidebar(e, x))
                 widget.bind("<ButtonRelease-1>", lambda e, x=ip: self.ao_soltar_sidebar(e, x))
+                widget.bind("<Button-3>", lambda e, x=ip: self.exibir_menu_contexto_camera(e, x))
                 widget.configure(cursor="hand2")
 
             self.botoes_referencia[ip] = {'frame': frm, 'lbl_nome': lbl_nome, 'lbl_ip': lbl_ip}
@@ -3979,6 +3997,14 @@ class CentralMonitoramento(ctk.CTk):
         self.update_idletasks()
 
     def sobrescrever_predefinicao(self, nome):
+        if self._is_adm_preset_locked(nome):
+            def on_success():
+                self.predefinicoes_desbloqueadas.add(nome)
+                self.atualizar_lista_predefinicoes_ui()
+                self.sobrescrever_predefinicao(nome)
+            self.solicitar_senha(on_success)
+            return
+
         self.abrir_modal_confirmacao("Confirmar", f"Deseja sobrescrever o predefinição '{nome}' com a configuração atual?",
                                      lambda: self._sobrescrever_predefinicao(nome))
 
@@ -4006,7 +4032,20 @@ class CentralMonitoramento(ctk.CTk):
         self.ultima_predefinicao = nome
         self.atualizar_lista_predefinicoes_ui()
 
+    def _is_adm_preset_locked(self, nome):
+        dados = self.predefinicoes.get(nome)
+        is_adm = isinstance(dados, dict) and dados.get("is_adm", False)
+        return is_adm and nome not in self.predefinicoes_desbloqueadas
+
     def deletar_predefinicao(self, nome):
+        if self._is_adm_preset_locked(nome):
+            def on_success():
+                self.predefinicoes_desbloqueadas.add(nome)
+                self.atualizar_lista_predefinicoes_ui()
+                self.deletar_predefinicao(nome)
+            self.solicitar_senha(on_success)
+            return
+
         self.abrir_modal_confirmacao("Confirmar", f"Deseja realmente excluir o predefinição '{nome}'?",
                                      lambda: self._deletar_predefinicao(nome))
 
@@ -4020,7 +4059,29 @@ class CentralMonitoramento(ctk.CTk):
             self.salvar_predefinicoes()
             self.atualizar_lista_predefinicoes_ui()
 
+    def exibir_menu_contexto_predefinicao(self, event, nome):
+        menu = tk.Menu(self, tearoff=0, bg=self.BG_SIDEBAR, fg=self.TEXT_P, font=("Roboto", 10))
+        menu.add_command(label="Aplicar", command=lambda: self.aplicar_predefinicao(nome))
+        menu.add_separator()
+        menu.add_command(label="Sobrescrever", command=lambda: self.sobrescrever_predefinicao(nome))
+        menu.add_command(label="Renomear", command=lambda: self.renomear_predefinicao(nome))
+        menu.add_separator()
+        menu.add_command(label="Excluir", command=lambda: self.deletar_predefinicao(nome))
+
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
     def renomear_predefinicao(self, nome_antigo):
+        if self._is_adm_preset_locked(nome_antigo):
+            def on_success():
+                self.predefinicoes_desbloqueadas.add(nome_antigo)
+                self.atualizar_lista_predefinicoes_ui()
+                self.renomear_predefinicao(nome_antigo)
+            self.solicitar_senha(on_success)
+            return
+
         def on_name_entered(novo_nome):
             novo_nome = novo_nome.strip()
             if not novo_nome:
@@ -4080,25 +4141,25 @@ class CentralMonitoramento(ctk.CTk):
             frm.pack(fill="x", pady=2, padx=2)
 
             frm.bind("<Button-1>", lambda e, n=nome: self.aplicar_predefinicao(n))
+            frm.bind("<Button-3>", lambda e, n=nome: self.exibir_menu_contexto_predefinicao(e, n))
             frm.configure(cursor="hand2")
 
+            btn_del = ctk.CTkButton(frm, text="X", width=30, height=30, fg_color="transparent",
+                                     text_color=self.TEXT_S, hover_color=self.ACCENT_RED,
+                                     command=lambda n=nome: self.deletar_predefinicao(n))
+            btn_del.pack(side="right", padx=5)
+
+            btn_ren = ctk.CTkButton(frm, text="✎", width=30, height=30, fg_color="transparent",
+                                     text_color=self.TEXT_S, hover_color=self.GRAY_DARK,
+                                     command=lambda n=nome: self.renomear_predefinicao(n))
+            btn_ren.pack(side="right", padx=2)
+
+            btn_save = ctk.CTkButton(frm, text="💾", width=30, height=30, fg_color="transparent",
+                                      text_color=self.TEXT_S, hover_color=self.GRAY_DARK,
+                                      command=lambda n=nome: self.sobrescrever_predefinicao(n))
+            btn_save.pack(side="right", padx=2)
+
             is_desbloqueada = nome in self.predefinicoes_desbloqueadas
-
-            if not is_adm or is_desbloqueada:
-                btn_del = ctk.CTkButton(frm, text="X", width=30, height=30, fg_color="transparent",
-                                         text_color=self.TEXT_S, hover_color=self.ACCENT_RED,
-                                         command=lambda n=nome: self.deletar_predefinicao(n))
-                btn_del.pack(side="right", padx=5)
-
-                btn_ren = ctk.CTkButton(frm, text="✎", width=30, height=30, fg_color="transparent",
-                                         text_color=self.TEXT_S, hover_color=self.GRAY_DARK,
-                                         command=lambda n=nome: self.renomear_predefinicao(n))
-                btn_ren.pack(side="right", padx=2)
-
-                btn_save = ctk.CTkButton(frm, text="💾", width=30, height=30, fg_color="transparent",
-                                          text_color=self.TEXT_S, hover_color=self.GRAY_DARK,
-                                          command=lambda n=nome: self.sobrescrever_predefinicao(n))
-                btn_save.pack(side="right", padx=2)
 
             if is_adm:
                 cadeado_icon = "🔓" if is_desbloqueada else "🔒"
@@ -4115,6 +4176,7 @@ class CentralMonitoramento(ctk.CTk):
 
             # Otimização: removemos update_idletasks() para evitar gargalos
             lbl.bind("<Button-1>", lambda e, n=nome: self.aplicar_predefinicao(n))
+            lbl.bind("<Button-3>", lambda e, n=nome: self.exibir_menu_contexto_predefinicao(e, n))
 
             self.predefinicao_widgets[nome] = frm
 
