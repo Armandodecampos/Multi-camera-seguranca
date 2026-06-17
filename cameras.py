@@ -78,10 +78,12 @@ def carregar_cache_bio():
                 reader = csv.DictReader(f)
                 for row in reader:
                     chave = f"{row['ID']}_{row['Data_Evento']}"
+                    # Sobrescreve com o dado mais recente (que pode ter foto/leitor preenchidos)
+                    existente = CACHE_EVENTOS_BIO.get(chave, {})
                     CACHE_EVENTOS_BIO[chave] = {
-                        "tem_foto": bool(row.get("Caminho_Foto")),
-                        "leitor": row.get("Leitor", ""),
-                        "dispositivo": row.get("Dispositivo", "")
+                        "tem_foto": bool(row.get("Caminho_Foto")) or existente.get("tem_foto", False),
+                        "leitor": row.get("Leitor") or existente.get("leitor", ""),
+                        "dispositivo": row.get("Dispositivo") if row.get("Dispositivo") != "Geral" else existente.get("dispositivo", "")
                     }
             print(f"[*] BIO: Cache carregado com {len(CACHE_EVENTOS_BIO)} eventos.")
         except Exception as e:
@@ -152,33 +154,18 @@ def registrar_evento(id_usuario, nome, evento, dispositivo, leitor, data_evento,
 
     data_registro = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # Se é uma atualização (evento já existia no cache mas faltava algo)
-    if evento_existente:
-        registros_finais = []
-        with open(ARQUIVO_CSV, mode='r', encoding='utf-8') as f:
-            reader = csv.reader(f)
-            cabecalho = next(reader)
-            registros_finais.append(cabecalho)
-            for row in reader:
-                if len(row) >= 8 and row[1] == id_usuario and row[6] == data_evento:
-                    if not row[7] and caminho_foto_local: row[7] = caminho_foto_local
-                    if not row[5] and leitor: row[5] = leitor
-                    if (not row[4] or row[4] == "Geral") and dispositivo and dispositivo != "Geral":
-                        row[4] = dispositivo
-                registros_finais.append(row)
-
-        with open(ARQUIVO_CSV, mode='w', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            writer.writerows(registros_finais)
-    else:
-        # Novo evento: Apenas apenda ao CSV (Muito mais eficiente)
-        novo_registro = [data_registro, id_usuario, nome, evento, dispositivo, leitor, data_evento, caminho_foto_local]
-        arquivo_existe = os.path.exists(ARQUIVO_CSV)
+    # SEMPRE apenda ao CSV para evitar leitura/escrita total do arquivo (Performance)
+    # Deduplicação é feita na carga do cache e na geração do HTML
+    novo_registro = [data_registro, id_usuario, nome, evento, dispositivo, leitor, data_evento, caminho_foto_local]
+    arquivo_existe = os.path.exists(ARQUIVO_CSV)
+    try:
         with open(ARQUIVO_CSV, mode='a', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
             if not arquivo_existe:
                 writer.writerow(["Data_Registro", "ID", "Nome", "Evento", "Dispositivo", "Leitor", "Data_Evento", "Caminho_Foto"])
             writer.writerow(novo_registro)
+    except Exception as e:
+        print(f"[-] BIO: Erro ao gravar CSV: {e}")
 
     # Atualiza o cache
     CACHE_EVENTOS_BIO[chave] = {
@@ -223,12 +210,30 @@ def registrar_evento(id_usuario, nome, evento, dispositivo, leitor, data_evento,
 
 def atualizar_relatorio_html():
     """Gera ou atualiza o dashboard estático externo em HTML com busca."""
-    registros = []
+    registros_dict = {}
     if os.path.exists(ARQUIVO_CSV):
-        with open(ARQUIVO_CSV, mode='r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            registros = list(reader)
-            registros.reverse()
+        try:
+            with open(ARQUIVO_CSV, mode='r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for r in reader:
+                    chave = f"{r['ID']}_{r['Data_Evento']}"
+                    # Se já existe, mescla informações
+                    if chave in registros_dict:
+                        existente = registros_dict[chave]
+                        if r.get("Caminho_Foto"): existente["Caminho_Foto"] = r["Caminho_Foto"]
+                        if r.get("Leitor"): existente["Leitor"] = r["Leitor"]
+                        if r.get("Dispositivo") and r["Dispositivo"] != "Geral":
+                            existente["Dispositivo"] = r["Dispositivo"]
+                    else:
+                        registros_dict[chave] = r
+        except Exception as e:
+            print(f"[-] BIO: Erro ao ler CSV para HTML: {e}")
+
+    # Converte para lista e limita aos 200 mais recentes
+    registros = list(registros_dict.values())
+    # Ordena por Data_Registro descendente (assumindo que o último registro no CSV é o mais novo)
+    registros.reverse()
+    registros = registros[:200]
 
     def gerar_html(path_fotos_prefix=""):
         ultima_atualizacao = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
@@ -636,14 +641,14 @@ class MosaicoScreenshotThread(threading.Thread):
             agora = time.time()
             if agora >= proximo_print:
                 try:
-                    # Gera o mosaico fora da thread principal
-                    cap_img = self.parent.gerar_frame_mosaico_completo()
+                    # Gera o mosaico (Numpy/BGR) fora da thread principal
+                    mosaico_bgr = self.parent.gerar_frame_mosaico_completo()
 
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
                     caminho_img = os.path.join(self.diretorio_saida, f"evento_{timestamp}.jpg")
 
-                    # Salva como JPEG
-                    cap_img.save(caminho_img, "JPEG", quality=85)
+                    # Salva como JPEG usando OpenCV (Mais rápido e economiza conversão)
+                    cv2.imwrite(caminho_img, mosaico_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
 
                     proximo_print = agora + self.intervalo
                 except Exception as e:
@@ -668,6 +673,7 @@ class CameraHandler:
         self.cap = None
         self.rodando = False
         self.frame_pil = None
+        self.frame_bgr = None # Cache BGR para mosaico (OpenCV)
         self.novo_frame = False
         self.lock = threading.Lock()
         self.conectado = False
@@ -947,6 +953,7 @@ class CameraHandler:
 
                     with self.lock:
                         self.frame_pil = pil_img
+                        self.frame_bgr = frame_res # Mantém versão original BGR para mosaico
                         self.novo_frame = True
                 except Exception as e:
                     time.sleep(0.01)
@@ -2575,8 +2582,7 @@ class CentralMonitoramento(ctk.CTk):
         return img
 
     def gerar_frame_mosaico_completo(self):
-        """Gera um mosaico manual das câmeras + painel de biometria."""
-        # Captura snapshot dos dados para evitar conflitos de thread e acesso a UI
+        """Gera um mosaico manual das câmeras + painel de biometria usando OpenCV/Numpy (Performance)."""
         with self.lock_shared:
             grid_snapshot = list(self.grid_cameras)
             handlers_snapshot = dict(self.camera_handlers)
@@ -2592,35 +2598,39 @@ class CentralMonitoramento(ctk.CTk):
         total_w = mosaico_w + bio_w
         total_h = mosaico_h
 
-        # Cria canvas
-        canvas = Image.new('RGB', (total_w, total_h), self.BG_MAIN)
+        # Cria canvas usando Numpy (BGR)
+        bg_color_bgr = [18, 18, 18] # #121212
+        canvas = np.full((total_h, total_w, 3), bg_color_bgr, dtype=np.uint8)
 
-        # 1. Cola câmeras
+        # 1. Adiciona câmeras ao mosaico
         for i in range(num_slots):
             ip = grid_snapshot[i]
             r, c = i // cols, i % cols
+            y_off, x_start = r * slot_h, c * slot_w
 
             handler = handlers_snapshot.get(ip)
-            cam_img_pil = None
+            frame_bgr = None
             if handler and handler != "CONECTANDO":
                 with handler.lock:
-                    # Apenas pega a referência do objeto PIL sob o lock
-                    cam_img_pil = handler.frame_pil
+                    frame_bgr = handler.frame_bgr
 
-            if cam_img_pil:
-                # O processamento pesado de resize e paste ocorre FORA do lock do handler
-                cam_img_resized = cam_img_pil.resize((slot_w, slot_h), Image.NEAREST)
-                canvas.paste(cam_img_resized, (c*slot_w, r*slot_h))
+            if frame_bgr is not None:
+                # Redimensiona usando OpenCV (Mais rápido que PIL)
+                frame_res = cv2.resize(frame_bgr, (slot_w, slot_h), interpolation=cv2.INTER_NEAREST)
+                canvas[y_off:y_off+slot_h, x_start:x_start+slot_w] = frame_res
             else:
-                # Slot vazio ou offline
-                draw = ImageDraw.Draw(canvas)
-                draw.rectangle([c*slot_w, r*slot_h, (c+1)*slot_w, (r+1)*slot_h], fill=self.BG_SIDEBAR, outline="black")
+                # Slot vazio ou offline (Borda e texto)
+                cv2.rectangle(canvas, (x_start, y_off), (x_start+slot_w, y_off+slot_h), (0, 0, 0), 1)
                 if ip and ip != "0.0.0.0":
-                    draw.text((c*slot_w + 10, r*slot_h + 10), f"OFFLINE\n{ip}", fill="gray")
+                    txt = f"OFFLINE {ip}"
+                    cv2.putText(canvas, txt, (x_start+10, y_off+30), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (128, 128, 128), 1)
 
-        # 2. Gera e cola painel de biometria usando o snapshot
-        bio_panel = self.renderizar_painel_biometria(bio_w, total_h, events_snapshot=events_snapshot)
-        canvas.paste(bio_panel, (mosaico_w, 0))
+        # 2. Renderiza painel de biometria (PIL) e converte para BGR
+        bio_panel_pil = self.renderizar_painel_biometria(bio_w, total_h, events_snapshot=events_snapshot)
+        bio_panel_bgr = cv2.cvtColor(np.array(bio_panel_pil), cv2.COLOR_RGB2BGR)
+
+        # Cola no mosaico principal
+        canvas[0:total_h, mosaico_w:mosaico_w+bio_w] = bio_panel_bgr
 
         return canvas
 
@@ -3119,7 +3129,7 @@ class CentralMonitoramento(ctk.CTk):
         self.atualizar_botoes_controle()
 
     def loop_exibicao(self):
-        delay_proximo_ciclo = 30
+        delay_proximo_ciclo = 50 # 20 FPS para maior fluidez e menor carga de CPU
         try:
             # Lógica de detecção de restauração (Minimizado -> Normal)
             is_iconic = self.state() == "iconic"
