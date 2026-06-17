@@ -1016,14 +1016,22 @@ class CentralMonitoramento(ctk.CTk):
 
     def configurar_variaveis_grid(self, num_slots):
         """Define as dimensões do grid com base na quantidade de slots."""
+        # Garante que o valor esteja entre 1 e 40
+        try:
+            num_slots = max(1, min(40, int(num_slots)))
+        except:
+            num_slots = 20
+
         self.num_slots = num_slots
-        if num_slots == 40:
-            self.grid_rows = 5
-            self.grid_cols = 8
-        else:
-            self.num_slots = 20 # Fallback
-            self.grid_rows = 4
+        if num_slots <= 5:
+            self.grid_rows = 1
+            self.grid_cols = num_slots
+        elif num_slots <= 20:
             self.grid_cols = 5
+            self.grid_rows = (num_slots + 4) // 5
+        else:
+            self.grid_cols = 8
+            self.grid_rows = (num_slots + 7) // 8
 
     def __init__(self, dados_iniciais=None):
         super().__init__()
@@ -2596,7 +2604,7 @@ class CentralMonitoramento(ctk.CTk):
     def abrir_janela_configuracoes(self):
         modal = ctk.CTkToplevel(self)
         modal.title("Configurações")
-        modal.geometry("400x420")
+        modal.geometry("400x480")
         modal.resizable(False, False)
         modal.attributes("-topmost", True)
 
@@ -2627,20 +2635,43 @@ class CentralMonitoramento(ctk.CTk):
         seg_button.set(self.tamanho_preview)
         seg_button.pack(pady=10, padx=20, fill="x")
 
-        # Segmented Button para Quantidade de Câmeras (Grid)
-        ctk.CTkLabel(modal, text="Quantidade de câmeras (Grid):", font=("Roboto", 14), text_color=self.TEXT_S).pack(pady=(20, 5))
+        # Seleção de Quantidade de Câmeras (Grid)
+        ctk.CTkLabel(modal, text="Quantidade de câmeras (Grid 1-40):", font=("Roboto", 14), text_color=self.TEXT_S).pack(pady=(20, 5))
 
-        def on_change_grid(nova_qtd_str):
-            nova_qtd = int(nova_qtd_str)
-            if nova_qtd != self.num_slots:
-                self.mudar_quantidade_slots(nova_qtd)
+        frame_grid = ctk.CTkFrame(modal, fg_color="transparent")
+        frame_grid.pack(pady=5, padx=20, fill="x")
 
-        seg_grid = ctk.CTkSegmentedButton(modal, values=["20", "40"],
-                                           command=on_change_grid,
-                                           selected_color=self.ACCENT_RED,
-                                           unselected_hover_color=self.ACCENT_WINE)
-        seg_grid.set(str(self.num_slots))
-        seg_grid.pack(pady=10, padx=20, fill="x")
+        entry_grid = ctk.CTkEntry(frame_grid, width=100, placeholder_text="Ex: 24")
+        entry_grid.insert(0, str(self.num_slots))
+        entry_grid.pack(side="left", padx=(0, 10))
+
+        def aplicar_custom_grid():
+            try:
+                nova_qtd = int(entry_grid.get())
+                if 1 <= nova_qtd <= 40:
+                    if nova_qtd != self.num_slots:
+                        self.mudar_quantidade_slots(nova_qtd)
+                else:
+                    self.abrir_modal_alerta("Erro", "A quantidade deve ser entre 1 e 40.")
+            except ValueError:
+                self.abrir_modal_alerta("Erro", "Digite um número válido.")
+
+        btn_aplicar = ctk.CTkButton(frame_grid, text="Aplicar", width=80,
+                                     fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
+                                     command=aplicar_custom_grid)
+        btn_aplicar.pack(side="left")
+
+        # Atalhos rápidos
+        frame_atalhos = ctk.CTkFrame(modal, fg_color="transparent")
+        frame_atalhos.pack(pady=5, padx=20, fill="x")
+
+        ctk.CTkButton(frame_atalhos, text="Usar 20", width=100,
+                       fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
+                       command=lambda: [entry_grid.delete(0, 'end'), entry_grid.insert(0, "20"), aplicar_custom_grid()]).pack(side="left", padx=(0, 10))
+
+        ctk.CTkButton(frame_atalhos, text="Usar 40", width=100,
+                       fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
+                       command=lambda: [entry_grid.delete(0, 'end'), entry_grid.insert(0, "40"), aplicar_custom_grid()]).pack(side="left")
 
     def mudar_quantidade_slots(self, nova_qtd):
         """Altera a quantidade de slots do grid e reconstrói a interface."""
