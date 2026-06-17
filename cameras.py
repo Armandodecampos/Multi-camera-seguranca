@@ -609,52 +609,40 @@ def carregar_dados_sistema():
     print("="*50)
     return dados
 
-# --- THREAD DE GRAVAÇÃO DE MOSAICO ---
-class MosaicoRecorderThread(threading.Thread):
-    def __init__(self, caminho_video, fps, parent):
+# --- THREAD DE REGISTRO DE EVENTOS (SCREENSHOTS) ---
+class MosaicoScreenshotThread(threading.Thread):
+    def __init__(self, diretorio_saida, intervalo, parent):
         super().__init__(daemon=True)
-        self.caminho_video = caminho_video
-        self.fps = fps
+        self.diretorio_saida = diretorio_saida
+        self.intervalo = intervalo
         self.parent = parent
         self.rodando = True
-        self.video_writer = None
 
     def run(self):
-        print(f"[*] BIO: Thread de gravação total iniciada: {self.caminho_video}")
-        intervalo = 1.0 / self.fps
-        proximo_frame = time.time()
+        print(f"[*] BIO: Thread de registro de eventos iniciada: {self.diretorio_saida}")
+        proximo_print = time.time()
 
         while self.rodando:
             agora = time.time()
-            if agora >= proximo_frame:
+            if agora >= proximo_print:
                 try:
                     # Gera o mosaico fora da thread principal
                     cap_img = self.parent.gerar_frame_mosaico_completo()
-                    frame_bgr = cv2.cvtColor(np.array(cap_img), cv2.COLOR_RGB2BGR)
-                    h, w = frame_bgr.shape[:2]
 
-                    if self.video_writer is None:
-                        fourcc = cv2.VideoWriter_fourcc(*'XVID')
-                        self.video_writer = cv2.VideoWriter(self.caminho_video, fourcc, self.fps, (w, h))
-                        print(f"[*] BIO: VideoWriter Total iniciado {w}x{h}")
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+                    caminho_img = os.path.join(self.diretorio_saida, f"evento_{timestamp}.jpg")
 
-                    if self.video_writer:
-                        self.video_writer.write(frame_bgr)
+                    # Salva como JPEG
+                    cap_img.save(caminho_img, "JPEG", quality=85)
 
-                    proximo_frame += intervalo
-                    # Se atrasar muito, pula frames para manter o tempo real
-                    if agora > proximo_frame + intervalo:
-                        proximo_frame = agora + intervalo
+                    proximo_print = agora + self.intervalo
                 except Exception as e:
-                    print(f"[-] BIO: Erro na gravação total (Thread): {e}")
+                    print(f"[-] BIO: Erro no registro de eventos (Thread): {e}")
                     time.sleep(0.1)
             else:
-                time.sleep(0.01)
+                time.sleep(0.1)
 
-        if self.video_writer:
-            self.video_writer.release()
-            self.video_writer = None
-        print("[*] BIO: Thread de gravação total finalizada.")
+        print("[*] BIO: Thread de registro de eventos finalizada.")
 
     def parar(self):
         self.rodando = False
@@ -1117,10 +1105,10 @@ class CentralMonitoramento(ctk.CTk):
         self.predefinicoes_desbloqueadas = set()
         self.gravando_tudo = False
         self.tamanho_gravacao_tudo = None
-        self.recorder_tudo_thread = None
-        self.caminho_video_tudo = None
+        self.recorder_eventos_thread = None
+        self.diretorio_eventos_atual = None
         self.ultimo_frame_tudo_tempo = 0
-        self.fps_tudo = 10
+        self.intervalo_eventos = 3
 
         # Lock para proteger acesso a dados compartilhados com a thread de gravação
         self.lock_shared = threading.Lock()
@@ -1245,7 +1233,7 @@ class CentralMonitoramento(ctk.CTk):
                                          command=self.abrir_janela_configuracoes)
         self.btn_config.pack(pady=(10, 5), padx=10, fill="x")
 
-        self.btn_gravar_tudo = ctk.CTkButton(self.sidebar, text="Gravar Tudo",
+        self.btn_gravar_tudo = ctk.CTkButton(self.sidebar, text="Registrar eventos",
                                          fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
                                          command=self.toggle_gravacao_tudo)
         self.btn_gravar_tudo.pack(pady=(0, 10), padx=10, fill="x")
@@ -2007,9 +1995,9 @@ class CentralMonitoramento(ctk.CTk):
             if h != "CONECTANDO":
                 h.parar_gravacao()
 
-        if self.recorder_tudo_thread:
-            self.recorder_tudo_thread.parar()
-            self.recorder_tudo_thread = None
+        if self.recorder_eventos_thread:
+            self.recorder_eventos_thread.parar()
+            self.recorder_eventos_thread = None
 
         # Para monitoramento biométrico
         if hasattr(self, 'bio_thread'):
@@ -2584,34 +2572,32 @@ class CentralMonitoramento(ctk.CTk):
 
     def toggle_gravacao_tudo(self):
         if not self.gravando_tudo:
-            # Iniciar Gravação Total
+            # Iniciar Registro de Eventos
             try:
                 downloads_dir = os.path.join(os.path.expanduser("~"), "Downloads")
-                os.makedirs(downloads_dir, exist_ok=True)
-
                 timestamp = time.strftime("%Y%m%d_%H%M%S")
-                filename = f"monitoramento_total_{timestamp}.avi"
-                self.caminho_video_tudo = os.path.join(downloads_dir, filename)
+                self.diretorio_eventos_atual = os.path.join(downloads_dir, f"Registro_Eventos_{timestamp}")
+                os.makedirs(self.diretorio_eventos_atual, exist_ok=True)
 
                 self.gravando_tudo = True
                 self.tamanho_gravacao_tudo = None
 
-                self.recorder_tudo_thread = MosaicoRecorderThread(self.caminho_video_tudo, self.fps_tudo, self)
-                self.recorder_tudo_thread.start()
+                self.recorder_eventos_thread = MosaicoScreenshotThread(self.diretorio_eventos_atual, self.intervalo_eventos, self)
+                self.recorder_eventos_thread.start()
 
-                self.btn_gravar_tudo.configure(text="Parar Gravação Total", fg_color=self.ACCENT_RED)
-                print(f"Gravação TOTAL iniciada (Background): {self.caminho_video_tudo}")
+                self.btn_gravar_tudo.configure(text="parar registro de eventos", fg_color=self.ACCENT_RED)
+                print(f"[*] BIO: Registro de eventos iniciado: {self.diretorio_eventos_atual}")
             except Exception as e:
-                self.abrir_modal_alerta("Erro", f"Não foi possível iniciar a gravação total: {e}")
+                self.abrir_modal_alerta("Erro", f"Não foi possível iniciar o registro de eventos: {e}")
         else:
-            # Parar Gravação Total
+            # Parar Registro de Eventos
             self.gravando_tudo = False
-            if self.recorder_tudo_thread:
-                self.recorder_tudo_thread.parar()
-                self.recorder_tudo_thread = None
+            if self.recorder_eventos_thread:
+                self.recorder_eventos_thread.parar()
+                self.recorder_eventos_thread = None
 
-            self.btn_gravar_tudo.configure(text="Gravar Tudo", fg_color=self.GRAY_DARK)
-            self.abrir_modal_alerta("Sucesso", "Gravação total finalizada e salva em Downloads.", show_open_folder=True)
+            self.btn_gravar_tudo.configure(text="Registrar eventos", fg_color=self.GRAY_DARK)
+            self.abrir_modal_alerta("Sucesso", "Registro de eventos finalizado e salvo em Downloads.", show_open_folder=True)
 
     def abrir_janela_configuracoes(self):
         modal = ctk.CTkToplevel(self)
@@ -2675,7 +2661,7 @@ class CentralMonitoramento(ctk.CTk):
 
     def mudar_quantidade_slots(self, nova_qtd):
         """Altera a quantidade de slots do grid e reconstrói a interface."""
-        # Interrompe gravação global antes de mudar dimensões do mosaico
+        # Interrompe registro global antes de mudar dimensões do mosaico
         if self.gravando_tudo:
             self.toggle_gravacao_tudo()
 
@@ -3847,7 +3833,7 @@ class CentralMonitoramento(ctk.CTk):
         self.atualizar_lista_predefinicoes_ui()
 
     def aplicar_predefinicao(self, nome):
-        # Interrompe gravação global se houver troca de predefinição,
+        # Interrompe registro global se houver troca de predefinição,
         # pois pode mudar o viewport e confundir o mosaico esperado
         if self.gravando_tudo:
             self.toggle_gravacao_tudo()
