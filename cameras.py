@@ -1990,32 +1990,46 @@ class CentralMonitoramento(ctk.CTk):
         except Exception as e:
             print(f"Erro ao restaurar layout total: {e}")
 
-    def recuperar_interface_pos_minimizacao(self):
-        """Re-aplica o layout e recria labels para recuperar do erro de tela preta."""
-        print("SISTEMA: Executando recuperação total da interface...")
-        try:
-            self.iconic_state = False
-            self.restaurar_layout_total()
+    def recuperar_interface_pos_minimizacao(self, start_idx=0):
+        """Re-aplica o layout e recria labels de forma assíncrona para evitar travamentos."""
+        if start_idx == 0:
+            print("SISTEMA: Iniciando recuperação assíncrona da interface...")
+            try:
+                self.iconic_state = False
+                self.restaurar_layout_total()
 
-            # Garante que as dimensões do grid estejam corretas antes de recriar labels
-            if self.slot_maximized is not None:
-                self.maximizar_slot(self.slot_maximized)
-            else:
-                self.restaurar_grid()
+                # Garante que as dimensões do grid estejam corretas antes de recriar labels
+                if self.slot_maximized is not None:
+                    self.maximizar_slot(self.slot_maximized)
+                else:
+                    self.restaurar_grid()
+            except Exception as e:
+                print(f"Erro no início da recuperação: {e}")
 
-            for i in range(self.num_slots):
-                # Limpamos TUDO antes de recriar para garantir estado virgem
+        # Processa em lotes de 10 slots por vez para manter fluidez
+        end_idx = min(start_idx + 10, self.num_slots)
+
+        for i in range(start_idx, end_idx):
+            try:
+                # Limpamos caches antes de recriar para garantir estado virgem
                 self.slot_ctk_images[i] = None
                 self.cache_ui_text[i] = None
                 self.cache_ui_image[i] = None
                 self.cache_ui_size[i] = None
                 self.recriar_label_slot(i)
+            except: pass
 
-            self.selecionar_slot(self.slot_selecionado)
-            self.update_idletasks()
-            print("SISTEMA: Recuperação concluída.")
-        except Exception as e:
-            print(f"Erro na recuperação de interface: {e}")
+        if end_idx < self.num_slots:
+            # Agenda próximo lote
+            self.after(10, lambda: self.recuperar_interface_pos_minimizacao(end_idx))
+        else:
+            # Finalização
+            try:
+                self.selecionar_slot(self.slot_selecionado)
+                self.update_idletasks()
+                print("SISTEMA: Recuperação assíncrona concluída.")
+            except Exception as e:
+                print(f"Erro ao finalizar recuperação: {e}")
 
     def ao_fechar(self):
         # Para todas as gravações ativas
