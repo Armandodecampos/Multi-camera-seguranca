@@ -1362,11 +1362,13 @@ class CentralMonitoramento(ctk.CTk):
         self.sidebar_right_visible = True
 
         # Título da Sidebar Direita
-        self.header_bio = ctk.CTkFrame(self.sidebar_right, fg_color=self.BG_PANEL, height=110, corner_radius=0)
+        self.header_bio = ctk.CTkFrame(self.sidebar_right, fg_color=self.BG_PANEL, height=140, corner_radius=0)
         self.header_bio.pack(fill="x")
         self.header_bio.pack_propagate(False)
 
         ctk.CTkLabel(self.header_bio, text="EVENTOS BIOMÉTRICOS", font=("Roboto", 16, "bold"), text_color=self.ACCENT_RED).pack(pady=(5,0))
+        self.lbl_data_hora_bio = ctk.CTkLabel(self.header_bio, text="", font=("Roboto", 14, "bold"), text_color="white")
+        self.lbl_data_hora_bio.pack(pady=(0, 5))
 
         container_btns_bio = ctk.CTkFrame(self.header_bio, fg_color="transparent")
         container_btns_bio.pack(pady=5)
@@ -2498,10 +2500,12 @@ class CentralMonitoramento(ctk.CTk):
             f_reg = ImageFont.load_default()
 
         # Título
-        draw.rectangle([0, 0, largura, 40], fill=self.BG_PANEL)
-        draw.text((largura//2, 20), "REGISTROS BIOMÉTRICOS", fill=self.ACCENT_RED, font=f_bold, anchor="mm")
+        draw.rectangle([0, 0, largura, 60], fill=self.BG_PANEL)
+        draw.text((largura//2, 18), "REGISTROS BIOMÉTRICOS", fill=self.ACCENT_RED, font=f_bold, anchor="mm")
+        agora_str = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+        draw.text((largura//2, 42), agora_str, fill="white", font=f_bold, anchor="mm")
 
-        y_cursor = 50
+        y_cursor = 70
         for evento in events_snapshot:
             if y_cursor + 100 > altura: break
 
@@ -3101,6 +3105,14 @@ class CentralMonitoramento(ctk.CTk):
             # Atualiza botões de controle periodicamente para garantir responsividade e sincronia
             self.atualizar_botoes_controle()
             self._processar_queue_bio()
+
+            # Atualiza data e hora na interface
+            agora_str = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+            self.lbl_data_hora_bio.configure(text=agora_str)
+
+            # Se estiver gravando tudo, marca o painel como sujo para atualizar o mosaico
+            if self.gravando_tudo:
+                self._painel_bio_dirty = True
 
             # Processa novas conexões
             while not self.fila_conexoes.empty():
