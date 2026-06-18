@@ -121,60 +121,43 @@ def salvar_foto(base64_data, id_usuario, data_evento):
         return ""
 
 
+# Cache global para evitar duplicados sem ler o CSV inteiro
+CACHE_IDS_SESSAO = set()
+
 def registrar_evento(id_usuario, nome, evento, dispositivo, leitor, data_evento, base64_foto, page):
-    """Registra as informações capturadas no CSV, no HTML e injeta na lista unificada."""
+    """Registra as informações capturadas no CSV (modo append) e atualiza a interface."""
+    global CACHE_IDS_SESSAO
+
+    chave = f"{id_usuario}_{data_evento}"
+    # Se já processamos este evento nesta sessão e não há foto nova, ignora
+    if chave in CACHE_IDS_SESSAO and not base64_foto:
+        return
+
     caminho_foto_local = ""
     if base64_foto:
         caminho_foto_local = salvar_foto(base64_foto, id_usuario, data_evento)
     
     data_registro = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    # Lógica de atualização/mesclagem inteligente no arquivo CSV para evitar duplicados
-    registros_existentes = []
-    atualizado = False
-    
-    if os.path.exists(ARQUIVO_CSV):
-        with open(ARQUIVO_CSV, mode='r', encoding='utf-8') as f:
-            reader = csv.reader(f)
-            cabecalho = next(reader, None)
-            # Verifica se o cabeçalho já tem a coluna 'Leitor' (migração automática)
-            tem_coluna_leitor = "Leitor" in cabecalho if cabecalho else False
+    # Modo append é muito mais rápido e evita travamentos em arquivos grandes
+    arquivo_existe = os.path.exists(ARQUIVO_CSV)
+    try:
+        with open(ARQUIVO_CSV, mode='a', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            if not arquivo_existe:
+                writer.writerow(["Data_Registro", "ID", "Nome", "Evento", "Dispositivo", "Leitor", "Data_Evento", "Caminho_Foto"])
 
-            for row in reader:
-                # Ajusta linha se for de versão antiga sem a coluna 'Leitor'
-                if not tem_coluna_leitor and len(row) == 7:
-                    row.insert(5, "") # Insere vazio na posição do Leitor
-
-                if len(row) >= 8:
-                    # Se encontramos o mesmo registro (ID e Data do Evento idênticos)
-                    if row[1] == id_usuario and row[6] == data_evento:
-                        # Se o registro antigo não tinha foto e agora temos, mesclamos a foto
-                        if not row[7] and caminho_foto_local:
-                            row[7] = caminho_foto_local
-                        # Atualiza leitor se estiver vazio
-                        if not row[5] and leitor:
-                            row[5] = leitor
-                        # Atualiza dispositivo se estiver vazio ou for "Geral"
-                        if (not row[4] or row[4] == "Geral") and dispositivo and dispositivo != "Geral":
-                            row[4] = dispositivo
-                        atualizado = True
-                    registros_existentes.append(row)
-                    
-    if not atualizado:
-        registros_existentes.append([data_registro, id_usuario, nome, evento, dispositivo, leitor, data_evento, caminho_foto_local])
+            writer.writerow([data_registro, id_usuario, nome, evento, dispositivo, leitor, data_evento, caminho_foto_local])
+    except Exception as e:
+        print(f"[-] Erro ao gravar CSV: {e}")
         
-    # Reescreve o CSV de forma limpa
-    with open(ARQUIVO_CSV, mode='w', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f)
-        writer.writerow(["Data_Registro", "ID", "Nome", "Evento", "Dispositivo", "Leitor", "Data_Evento", "Caminho_Foto"])
-        writer.writerows(registros_existentes)
-        
-    print(f"[+] REGISTRO SINCRO: {id_usuario} - {nome} | Leitor: {leitor} | Evento: {evento} | Data: {data_evento}")
+    CACHE_IDS_SESSAO.add(chave)
+    print(f"[+] REGISTRO: {id_usuario} - {nome} | Leitor: {leitor} | Data: {data_evento}")
     
     # Atualiza Relatório HTML em disco
     atualizar_relatorio_html()
     
-    # Injeta na lista unificada
+    # Injeta na lista unificada (UI do Playwright)
     injetar_evento_unificado(page, id_usuario, nome, evento, dispositivo, leitor, data_evento, base64_foto)
 
 
