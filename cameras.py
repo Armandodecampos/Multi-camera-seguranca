@@ -88,25 +88,22 @@ def bio_io_worker():
 
             if tipo == "SAVE_EVENT":
                 # Processamento de imagem e escrita no CSV (Background)
-                base64_foto = dados.get("base64_foto")
-                id_usuario = dados.get("id_usuario")
-                data_evento = dados.get("data_evento")
-                registro = dados.get("registro") # [data_registro, id, nome, evento, disp, leitor, data_ev, caminho_foto_vazio]
+                base64_foto = dados.get("foto")
+                id_usuario = str(dados.get("id_usuario", "0"))
+                data_evento = str(dados.get("data_evento", ""))
 
                 caminho_foto_local = ""
                 if base64_foto:
                     caminho_foto_local = salvar_foto_bio(base64_foto, id_usuario, data_evento)
-                    # Atualiza o caminho da foto no registro CSV
-                    registro[7] = caminho_foto_local
 
                     # Atualiza o cache em memória com o caminho da foto real (Thread safe)
                     chave = f"{id_usuario}_{data_evento}"
                     with LOCK_BIO_DATA:
                         if chave in CACHE_EVENTOS_BIO:
                             CACHE_EVENTOS_BIO[chave]["tem_foto"] = True
-                            CACHE_EVENTOS_BIO[chave]["Caminho_Foto"] = caminho_foto_local
+                            CACHE_EVENTOS_BIO[chave]["caminho_foto"] = caminho_foto_local
                         if chave in HISTORICO_RECENTE_BIO:
-                            HISTORICO_RECENTE_BIO[chave]["Caminho_Foto"] = caminho_foto_local
+                            HISTORICO_RECENTE_BIO[chave]["caminho_foto"] = caminho_foto_local
 
                 arquivo_existe = os.path.exists(ARQUIVO_CSV)
                 try:
@@ -114,7 +111,13 @@ def bio_io_worker():
                         writer = csv.writer(f)
                         if not arquivo_existe:
                             writer.writerow(["Data_Registro", "ID", "Nome", "Evento", "Dispositivo", "Leitor", "Data_Evento", "Caminho_Foto"])
-                        writer.writerow(registro)
+
+                        # [Data_Registro, ID, Nome, Evento, Dispositivo, Leitor, Data_Evento, Caminho_Foto]
+                        writer.writerow([
+                            dados.get("data_registro"), id_usuario, dados.get("nome"),
+                            dados.get("evento"), dados.get("dispositivo"), dados.get("leitor"),
+                            data_evento, caminho_foto_local
+                        ])
                 except Exception as e:
                     print(f"[-] BIO IO: Erro ao gravar CSV: {e}")
 
@@ -129,42 +132,104 @@ def bio_io_worker():
 # Inicia o worker de I/O
 threading.Thread(target=bio_io_worker, daemon=True).start()
 
-def carregar_cache_bio():
-    """Carrega eventos existentes do CSV para o cache em memória."""
+def carregar_cache_bio(queue_ui=None):
+    """Carrega eventos existentes do CSV para o cache em memória de forma robusta."""
     global CACHE_EVENTOS_BIO, HISTORICO_RECENTE_BIO
     if os.path.exists(ARQUIVO_CSV):
         try:
             todos_registros = []
-            with open(ARQUIVO_CSV, mode='r', encoding='utf-8') as f:
+            with open(ARQUIVO_CSV, mode='r', encoding='utf-8', errors='replace') as f:
+                # Usa DictReader para lidar com mapeamento de colunas
                 reader = csv.DictReader(f)
+
+                # Normaliza os fieldnames para evitar problemas de case
+                if reader.fieldnames:
+                    mapping = {fn.lower(): fn for fn in reader.fieldnames}
+                else:
+                    mapping = {}
+
+                def get_val_raw(row_data, key):
+                    # Tenta Case-Insensitive
+                    for k in [key, key.lower(), key.capitalize(), key.upper()]:
+                        if k in row_data: return row_data[k]
+                    # Tenta via mapping se disponível
+                    real_key = mapping.get(key.lower())
+                    if real_key: return row_data[real_key]
+                    return ""
+
                 for row in reader:
-                    todos_registros.append(row)
+                    id_u = get_val_raw(row, "ID")
+                    data_e = get_val_raw(row, "Data_Evento")
+                    if id_u and data_e:
+                        todos_registros.append(row)
+
+            print(f"[*] BIO: Lendo {len(todos_registros)} registros do histórico...")
 
             # Processa do mais antigo para o mais novo para o cache
             with LOCK_BIO_DATA:
                 for row in todos_registros:
-                    chave = f"{row['ID']}_{row['Data_Evento']}"
+                    def get_val(r, k): # Redefinindo localmente para facilidade
+                        for key in [k, k.lower(), k.capitalize(), k.upper()]:
+                            if key in r: return r[key]
+                        return ""
+
+                    id_u = str(get_val(row, "ID") or "0")
+                    data_e = str(get_val(row, "Data_Evento") or "")
+                    chave = f"{id_u}_{data_e}"
+
                     existente = CACHE_EVENTOS_BIO.get(chave, {})
+
+                    # Cache de estado (para evitar redundância no monitoramento)
+                    caminho_f = get_val(row, "Caminho_Foto") or existente.get("caminho_foto", "")
+                    leitor_val = get_val(row, "Leitor") or existente.get("leitor", "")
+                    disp_val = get_val(row, "Dispositivo")
+                    if not disp_val or disp_val == "Geral": disp_val = existente.get("dispositivo", "")
+
                     CACHE_EVENTOS_BIO[chave] = {
-                        "tem_foto": bool(row.get("Caminho_Foto")) or existente.get("tem_foto", False),
-                        "leitor": row.get("Leitor") or existente.get("leitor", ""),
-                        "dispositivo": row.get("Dispositivo") if row.get("Dispositivo") != "Geral" else existente.get("dispositivo", "")
+                        "tem_foto": bool(caminho_f),
+                        "leitor": leitor_val,
+                        "dispositivo": disp_val,
+                        "caminho_foto": caminho_f
                     }
-                    # Atualiza histórico recente (OrderedDict mantém ordem de inserção)
+
+                    # Normaliza keys para o formato lowercase usado pelo sistema em tempo real
+                    registro_mem = {
+                        "data_registro": get_val(row, "Data_Registro"),
+                        "id_usuario": id_u,
+                        "nome": get_val(row, "Nome") or "Desconhecido",
+                        "evento": get_val(row, "Evento") or "",
+                        "dispositivo": disp_val,
+                        "leitor": leitor_val,
+                        "data_evento": data_e,
+                        "caminho_foto": caminho_f,
+                        "foto": None,
+                        "foto_pil": None
+                    }
+
+                    # Atualiza histórico recente (OrderedDict mantém ordem cronológica de inserção)
                     if chave in HISTORICO_RECENTE_BIO:
                         HISTORICO_RECENTE_BIO.move_to_end(chave)
-                    HISTORICO_RECENTE_BIO[chave] = row
+                    HISTORICO_RECENTE_BIO[chave] = registro_mem
 
-                    # Limita histórico recente
                     if len(HISTORICO_RECENTE_BIO) > 200:
                         HISTORICO_RECENTE_BIO.popitem(last=False)
 
-            print(f"[*] BIO: Cache carregado com {len(CACHE_EVENTOS_BIO)} eventos.")
-        except Exception as e:
-            print(f"[-] BIO: Erro ao carregar cache: {e}")
+            # Popula a UI com os eventos carregados (se a fila estiver disponível)
+            if queue_ui:
+                count = 0
+                # Envia do mais antigo para o mais novo (eles são empilhados no topo do frame)
+                for reg in HISTORICO_RECENTE_BIO.values():
+                    queue_ui.put({"type": "BIO_EVENT", "data": reg})
+                    count += 1
+                print(f"[*] BIO: {count} eventos enviados para a fila da UI.")
 
-# Inicializa o cache em background para não travar a inicialização do script
-threading.Thread(target=carregar_cache_bio, daemon=True).start()
+            print(f"[*] BIO: Cache carregado com {len(CACHE_EVENTOS_BIO)} eventos únicos.")
+        except Exception as e:
+            print(f"[-] BIO: Erro ao carregar cache histórico: {e}")
+            import traceback
+            traceback.print_exc()
+
+# O cache será carregado após a criação da instância CentralMonitoramento para popular a UI
 
 # Configuração de baixa latência para OpenCV/FFMPEG
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp;stimeout;3000000;buffer_size;2048000;analyzeduration;50000;probesize;50000;fflags;discardcorrupt;max_delay;500000;reorder_queue_size;16;rtsp_flags;prefer_tcp;reconnect;1;reconnect_streamed;1;reconnect_at_eof;1;allowed_media_types;video"
@@ -184,10 +249,17 @@ def normalizar_data(data_str):
     if not data_str:
         return f"{DATA_SISTEMA_ATUAL} {datetime.now().strftime('%H:%M:%S')}"
 
+    # Formato correto: YYYY-MM-DD HH:MM:SS
     if re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$", data_str):
         DATA_SISTEMA_ATUAL = data_str.split(' ')[0]
         return data_str
 
+    # Formato BR: DD/MM/YYYY HH:MM:SS
+    match_br = re.match(r"^(\d{2})/(\d{2})/(\d{4}) (\d{2}:\d{2}:\d{2})$", data_str)
+    if match_br:
+        return f"{match_br.group(3)}-{match_br.group(2)}-{match_br.group(1)} {match_br.group(4)}"
+
+    # Apenas tempo: HH:MM:SS
     if re.match(r"^\d{2}:\d{2}:\d{2}$", data_str):
         return f"{DATA_SISTEMA_ATUAL} {data_str}"
 
@@ -213,12 +285,16 @@ def registrar_evento(id_usuario, nome, evento, dispositivo, leitor, data_evento,
     global CACHE_EVENTOS_BIO
 
     chave = f"{id_usuario}_{data_evento}"
-    evento_existente = CACHE_EVENTOS_BIO.get(chave)
+
+    with LOCK_BIO_DATA:
+        evento_existente = CACHE_EVENTOS_BIO.get(chave)
 
     # Se o evento já existe e não estamos adicionando uma foto nova ou dados novos, ignora
     if evento_existente:
         ja_tem_foto = evento_existente.get("tem_foto", False)
+        # Se os dados fundamentais já existem no arquivo global
         if (ja_tem_foto or not base64_foto) and evento_existente.get("leitor") and evento_existente.get("dispositivo"):
+            # print(f"DEBUG BIO: Evento {chave} já processado. Ignorando.")
             return
 
     # O processamento pesado de I/O é delegado ao worker para não travar o monitoramento
@@ -231,10 +307,14 @@ def registrar_evento(id_usuario, nome, evento, dispositivo, leitor, data_evento,
     BIO_IO_QUEUE.put({
         "tipo": "SAVE_EVENT",
         "dados": {
-            "registro": novo_registro,
-            "base64_foto": base64_foto,
+            "data_registro": data_registro,
             "id_usuario": id_usuario,
-            "data_evento": data_evento
+            "nome": nome,
+            "evento": evento,
+            "dispositivo": dispositivo,
+            "leitor": leitor,
+            "data_evento": data_evento,
+            "foto": base64_foto
         }
     })
 
@@ -251,17 +331,26 @@ def registrar_evento(id_usuario, nome, evento, dispositivo, leitor, data_evento,
 
     # Atualiza o cache e histórico em memória (Thread safe)
     with LOCK_BIO_DATA:
+        # Garante que evento_existente seja um dict mesmo se nulo
+        ev_ex = evento_existente if evento_existente else {}
+
         CACHE_EVENTOS_BIO[chave] = {
-            "tem_foto": bool(base64_foto) or (evento_existente.get("tem_foto") if evento_existente else False),
-            "leitor": leitor or (evento_existente.get("leitor") if evento_existente else ""),
-            "dispositivo": dispositivo or (evento_existente.get("dispositivo") if evento_existente else ""),
-            "Caminho_Foto": evento_existente.get("Caminho_Foto") if evento_existente else ""
+            "tem_foto": bool(base64_foto) or ev_ex.get("tem_foto", False),
+            "leitor": leitor or ev_ex.get("leitor", ""),
+            "dispositivo": dispositivo or ev_ex.get("dispositivo", ""),
+            "caminho_foto": ev_ex.get("caminho_foto", "")
         }
 
         registro_mem = {
-            "Data_Registro": data_registro, "ID": id_usuario, "Nome": nome, "Evento": evento,
-            "Dispositivo": dispositivo, "Leitor": leitor, "Data_Evento": data_evento,
-            "Caminho_Foto": CACHE_EVENTOS_BIO[chave]["Caminho_Foto"],
+            "data_registro": data_registro,
+            "id_usuario": id_usuario,
+            "nome": nome,
+            "evento": evento,
+            "dispositivo": CACHE_EVENTOS_BIO[chave]["dispositivo"],
+            "leitor": CACHE_EVENTOS_BIO[chave]["leitor"],
+            "data_evento": data_evento,
+            "caminho_foto": CACHE_EVENTOS_BIO[chave]["caminho_foto"],
+            "foto": base64_foto,
             "foto_pil": foto_pil # Mantém objeto PIL em memória para UI e mosaico
         }
         if chave in HISTORICO_RECENTE_BIO:
@@ -323,24 +412,27 @@ def atualizar_relatorio_html():
         <div id="eventGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
 """)
         for r in registros:
-            caminho_foto = r.get('Caminho_Foto', '')
+            caminho_foto = r.get('caminho_foto', '')
             img_tag_src = f"{path_fotos_prefix}fotos/{os.path.basename(caminho_foto)}" if caminho_foto else "https://via.placeholder.com/150"
-            disp = r.get("Dispositivo", "")
-            leitor = r.get("Leitor", "")
-            evento = r.get("Evento", "")
+            disp = r.get("dispositivo", "")
+            leitor = r.get("leitor", "")
+            evento = r.get("evento", "")
+            id_u = r.get("id_usuario", "")
+            nome_u = r.get("nome", "")
+            data_e = r.get("data_evento", "")
 
             buffer.append(f"""
             <div class="evento-card bg-gray-800 rounded-xl overflow-hidden shadow-lg border border-gray-700 p-4 transition-all duration-300 hover:border-teal-500">
                 <div class="flex justify-center mb-4">
                     <img class="h-44 object-contain rounded-lg" src="{img_tag_src}" onerror="this.src='https://via.placeholder.com/150'">
                 </div>
-                <span class="inline-block px-2 py-1 text-xs font-semibold rounded-full bg-teal-900 text-teal-300 mb-2">ID: {r['ID']}</span>
-                <h3 class="text-lg font-bold text-white truncate">{r['Nome']}</h3>
+                <span class="inline-block px-2 py-1 text-xs font-semibold rounded-full bg-teal-900 text-teal-300 mb-2">ID: {id_u}</span>
+                <h3 class="text-lg font-bold text-white truncate">{nome_u}</h3>
                 <p class="text-sm text-yellow-400 font-medium mt-1">{evento}</p>
                 <p class="text-xs text-teal-400 font-semibold mt-0.5">Leitor: {leitor}</p>
                 <p class="text-sm text-gray-300 font-medium mt-0.5">🖥️ {disp}</p>
                 <div class="mt-4 pt-3 border-t border-gray-700 text-xs text-gray-400">
-                    <div><strong>Evento em:</strong> {r['Data_Evento']}</div>
+                    <div><strong>Evento em:</strong> {data_e}</div>
                 </div>
             </div>""")
 
@@ -381,42 +473,55 @@ class BioMonitorThread(threading.Thread):
         os.makedirs(DIRETORIO_FOTOS, exist_ok=True)
         with sync_playwright() as p:
             try:
-                # Tenta iniciar navegador (Visível a pedido do usuário)
+                # Tenta iniciar navegador
                 try:
                     self.browser = p.chromium.launch(headless=False)
-                except:
+                except Exception as eb:
+                    print(f"[*] BIO: Falha ao iniciar Chromium headed ({eb}). Tentando headless...")
                     try:
-                        self.browser = p.chromium.launch(headless=False, channel="chrome")
-                    except:
-                        self.browser = p.chromium.launch(headless=False, channel="msedge")
+                        self.browser = p.chromium.launch(headless=True)
+                    except Exception as eb2:
+                        print(f"[-] BIO: Falha crítica ao iniciar navegador: {eb2}")
+                        return
 
                 self.context = self.browser.new_context()
                 self.page = self.context.new_page()
 
                 print(f"[*] BIO: Acessando {URL_LOGIN_BIO}...")
-                self.page.goto(URL_LOGIN_BIO)
+                self.page.goto(URL_LOGIN_BIO, timeout=60000)
 
-                self.page.wait_for_selector("#username", timeout=15000)
-                self.page.wait_for_selector("#password", timeout=15000)
+                print("[*] BIO: Aguardando campos de login...")
+                self.page.wait_for_selector("#username", timeout=30000)
+                self.page.wait_for_selector("#password", timeout=30000)
 
                 print("[*] BIO: Efetuando login...")
                 self.page.fill("#username", USUARIO_BIO)
                 self.page.fill("#password", SENHA_BIO)
 
+                # Tenta submeter o formulário
                 try:
-                    btn_login = self.page.locator("button:visible, input[type='submit']:visible, a.login-btn:visible")
-                    btn_login.first.click(timeout=5000)
+                    btn_login = self.page.locator("button:visible, input[type='submit']:visible, a.login-btn:visible").first
+                    if btn_login.count() > 0:
+                        btn_login.click(timeout=5000)
+                    else:
+                        self.page.keyboard.press("Enter")
                 except:
-                    print("[!] BIO: Botão de login não clicável, tentando via tecla Enter...")
-                    self.page.press("#password", "Enter")
+                    self.page.keyboard.press("Enter")
 
-                self.page.wait_for_url(re.compile(r"(main|dashboard)\.do"), timeout=30000)
-                print("[+] BIO: Login efetuado com sucesso!")
+                # Espera a navegação pós-login
+                print("[*] BIO: Aguardando redirecionamento pós-login...")
+                try:
+                    self.page.wait_for_url(re.compile(r"(main|dashboard|index|home)"), timeout=30000)
+                except:
+                    print(f"[!] BIO: Timeout ao esperar URL esperada. URL atual: {self.page.url}")
 
+                print(f"[+] BIO: Monitoramento iniciado. URL: {self.page.url}")
                 self.loop_monitoramento()
 
             except Exception as e:
                 print(f"[-] BIO: Erro no monitoramento biométrico: {e}")
+                import traceback
+                traceback.print_exc()
             finally:
                 if self.browser:
                     try: self.browser.close()
@@ -432,22 +537,38 @@ class BioMonitorThread(threading.Thread):
         # Cache de conteúdo dos frames para evitar processamento se nada mudou
         cache_html_fontes = {} # {id(fonte): hash/content}
 
+        print("[*] BIO: Loop de monitoramento iniciado.")
+
         while self.rodando:
             try:
+                if not self.page:
+                    time.sleep(1)
+                    continue
+
+                # print(f"DEBUG BIO: URL Atual: {self.page.url}")
                 # Verifica se fomos deslogados (redirecionados para bioLogin.do)
-                if self.page and "bioLogin.do" in self.page.url and not self.page.url.endswith("bioLogin.do"):
-                    # Se estamos na URL de login mas não foi onde começamos, tentamos re-logar
-                    print("[!] BIO: Sessão expirada ou redirecionada. Tentando re-autenticar...")
-                    self.page.fill("#username", USUARIO_BIO)
-                    self.page.fill("#password", SENHA_BIO)
+                if "bioLogin.do" in self.page.url:
+                    # Se estamos na URL de login, tentamos re-logar
+                    print(f"[!] BIO: Tela de login detectada ({self.page.url}). Re-autenticando...")
                     try:
+                        # Tenta limpar e preencher campos
+                        self.page.locator("#username").fill(USUARIO_BIO, timeout=5000)
+                        self.page.locator("#password").fill(SENHA_BIO, timeout=5000)
+
+                        # Tenta clicar no botão visível ou dar Enter
                         btn_login = self.page.locator("button:visible, input[type='submit']:visible, a.login-btn:visible")
-                        btn_login.first.click(timeout=5000)
-                    except:
-                        print("[!] BIO: Botão de login não clicável, tentando via tecla Enter...")
-                        self.page.press("#password", "Enter")
-                    self.page.wait_for_url(re.compile(r"(main|dashboard)\.do"), timeout=15000)
-                    print("[+] BIO: Re-autenticação bem-sucedida.")
+                        if btn_login.count() > 0:
+                            btn_login.first.click(timeout=5000)
+                        else:
+                            self.page.keyboard.press("Enter")
+
+                        # Espera a mudança de URL (Sair da tela de login)
+                        self.page.wait_for_url(lambda u: "bioLogin.do" not in u or "main" in u or "dashboard" in u, timeout=20000)
+                        print(f"[+] BIO: Re-autenticação bem-sucedida. URL: {self.page.url}")
+                    except Exception as e_login:
+                        print(f"[-] BIO: Falha na re-autenticação: {e_login}")
+                        time.sleep(5)
+                        continue
 
                 # Varredura em frames e na página principal
                 fontes = [self.page] + (self.page.frames if self.page else [])
@@ -455,19 +576,20 @@ class BioMonitorThread(threading.Thread):
                 for fonte in fontes:
                     try:
                         # Filtro de URL para evitar processar frames irrelevantes
-                        url_fonte = fonte.url
+                        try:
+                            url_fonte = fonte.url
+                        except: continue
+
                         if "192.168.7.9" not in url_fonte and "about:blank" not in url_fonte:
                             continue
 
-                        # Otimização: Verifica se o conteúdo do frame mudou antes de processar
+                        # Otimização: Verifica se o conteúdo mudou antes de scraping pesado
                         try:
                             html_atual = fonte.content()
-                            # Se o conteúdo for o mesmo do loop anterior, pula processamento pesado
                             if cache_html_fontes.get(id(fonte)) == html_atual:
                                 continue
                             cache_html_fontes[id(fonte)] = html_atual
-                        except:
-                            pass
+                        except: pass
 
                         # --- ORIGEM 1: VARREDURA DIRETA NA TABELA REAL ---
                         linhas_tabela = self.extrair_linhas_tabela_real(fonte)
@@ -519,9 +641,13 @@ class BioMonitorThread(threading.Thread):
                 time.sleep(5)
 
     def parse_pessoa(self, pessoa_texto):
-        match = re.match(r"(\d+)\((.+)\)", pessoa_texto)
+        if not pessoa_texto: return "Desconhecido", ""
+        # Suporta formatos: "123(Nome)", "123 (Nome)", "123"
+        match = re.match(r"(\d+)\s*\(?([^)]*)\)?", pessoa_texto)
         if match:
-            return match.group(1), match.group(2)
+            uid = match.group(1)
+            nome = match.group(2).strip()
+            return uid, (nome if nome else f"Usuário {uid}")
         return "Desconhecido", pessoa_texto
 
     def extrair_linhas_tabela_real(self, frame):
@@ -529,19 +655,27 @@ class BioMonitorThread(threading.Thread):
             js_tabela = """
             () => {
                 const resultados = [];
-                const trs = document.querySelectorAll('tr');
-                for (const tr of trs) {
-                    const tds = tr.querySelectorAll('td');
-                    if (tds.length >= 8) {
-                        const horario = tds[0].innerText ? tds[0].innerText.trim() : tds[0].textContent.trim();
-                        if (/^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}$/.test(horario)) {
-                            resultados.push({
-                                horario: horario,
-                                dispositivo: tds[2].innerText ? tds[2].innerText.trim() : tds[2].textContent.trim(),
-                                evento: tds[4].innerText ? tds[4].innerText.trim() : tds[4].textContent.trim(),
-                                pessoa: tds[6].innerText ? tds[6].innerText.trim() : tds[6].textContent.trim(),
-                                leitor: tds[7].innerText ? tds[7].innerText.trim() : tds[7].textContent.trim()
-                            });
+                // Busca em todas as tabelas, priorizando as que parecem de monitoramento
+                const tabelas = Array.from(document.querySelectorAll('table'));
+                for (const tabela of tabelas) {
+                    const trs = Array.from(tabela.querySelectorAll('tr'));
+                    if (trs.length < 2) continue; // Pula tabelas vazias
+
+                    for (const tr of trs) {
+                        const tds = Array.from(tr.querySelectorAll('td'));
+                        // Tabelas de evento do sistema geralmente têm 8+ colunas
+                        if (tds.length >= 8) {
+                            const horario = (tds[0].innerText || tds[0].textContent || "").trim();
+                            // Validação de formato de tempo HH:MM:SS no final da string
+                            if (/(\\d{2}:\\d{2}:\\d{2})$/.test(horario)) {
+                                resultados.push({
+                                    horario: horario,
+                                    dispositivo: (tds[2].innerText || tds[2].textContent || "").trim(),
+                                    evento: (tds[4].innerText || tds[4].textContent || "").trim(),
+                                    pessoa: (tds[6].innerText || tds[6].textContent || "").trim(),
+                                    leitor: (tds[7].innerText || tds[7].textContent || "").trim()
+                                });
+                            }
                         }
                     }
                 }
@@ -549,7 +683,8 @@ class BioMonitorThread(threading.Thread):
             }
             """
             return frame.evaluate(js_tabela)
-        except:
+        except Exception as e:
+            # print(f"DEBUG BIO: Erro no JS da tabela: {e}")
             return []
 
     def extrair_dados_notificacao(self, html_interno):
@@ -1599,6 +1734,15 @@ class CentralMonitoramento(ctk.CTk):
             except: pass
 
         tem_foto = False
+
+        # Tentativa de carregar foto do disco se não estiver em memória
+        if not img_pil:
+            caminho_local = dados.get("caminho_foto")
+            if caminho_local and os.path.exists(caminho_local):
+                try:
+                    img_pil = Image.open(caminho_local)
+                except: pass
+
         if img_pil:
             try:
                 img_ctk = ctk.CTkImage(img_pil, size=(90, 90))
@@ -1615,7 +1759,12 @@ class CentralMonitoramento(ctk.CTk):
         info_f.pack(side="left", fill="both", expand=True, padx=5, pady=2)
 
         # ID e Hora em uma linha (sem frame extra)
-        lbl_id_hora = ctk.CTkLabel(info_f, text=f"ID: {dados['id_usuario']}  •  🕒 {dados['data_evento'].split(' ')[1]}",
+        try:
+            hora_str = dados['data_evento'].split(' ')[1]
+        except:
+            hora_str = dados['data_evento']
+
+        lbl_id_hora = ctk.CTkLabel(info_f, text=f"ID: {dados['id_usuario']}  •  🕒 {hora_str}",
                                    font=("Roboto", 9, "bold"), text_color=self.ACCENT_RED, anchor="w")
         lbl_id_hora.pack(fill="x")
 
@@ -4213,4 +4362,8 @@ class CentralMonitoramento(ctk.CTk):
 if __name__ == "__main__":
     dados_sistema = carregar_dados_sistema()
     app = CentralMonitoramento(dados_iniciais=dados_sistema)
+
+    # Carrega cache biométrico e popula a UI (Background)
+    threading.Thread(target=carregar_cache_bio, args=(app.queue_bio,), daemon=True).start()
+
     app.mainloop()
