@@ -473,18 +473,39 @@ class BioMonitorThread(threading.Thread):
         os.makedirs(DIRETORIO_FOTOS, exist_ok=True)
         with sync_playwright() as p:
             try:
-                # Tenta iniciar navegador
+                # Tentativa de inicialização robusta do navegador
+                print("[*] BIO: Tentando iniciar Chromium...")
                 try:
                     self.browser = p.chromium.launch(headless=False)
-                except Exception as eb:
-                    print(f"[*] BIO: Falha ao iniciar Chromium headed ({eb}). Tentando headless...")
+                except Exception as e1:
+                    print(f"[*] BIO: Falha no Chromium nativo ({e1}). Tentando Google Chrome...")
                     try:
-                        self.browser = p.chromium.launch(headless=True)
-                    except Exception as eb2:
-                        print(f"[-] BIO: Falha crítica ao iniciar navegador: {eb2}")
-                        return
+                        self.browser = p.chromium.launch(headless=False, channel="chrome")
+                    except Exception as e2:
+                        print(f"[*] BIO: Falha no Google Chrome ({e2}). Tentando Microsoft Edge...")
+                        try:
+                            self.browser = p.chromium.launch(headless=False, channel="msedge")
+                        except Exception as e3:
+                            print(f"[*] BIO: Falha em todos os navegadores headed. Tentando Headless...")
+                            try:
+                                self.browser = p.chromium.launch(headless=True)
+                            except Exception as e4:
+                                print(f"[-] BIO: Falha crítica ao iniciar navegador: {e4}")
+                                print("[!] DICA: Tente rodar 'playwright install' no terminal.")
+                                return
 
-                self.context = self.browser.new_context()
+                # Se chegamos aqui, o browser foi iniciado
+                # Tenta detectar resolução para viewport amigável
+                try:
+                    import tkinter as tk
+                    root = tk.Tk()
+                    sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+                    root.destroy()
+                    viewport = {"width": sw - 450, "height": sh - 100}
+                except:
+                    viewport = {"width": 1280, "height": 720}
+
+                self.context = self.browser.new_context(viewport=viewport)
                 self.page = self.context.new_page()
 
                 print(f"[*] BIO: Acessando {URL_LOGIN_BIO}...")
