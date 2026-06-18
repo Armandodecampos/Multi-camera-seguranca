@@ -56,6 +56,34 @@ def obter_desktop():
             return caminho
     return os.path.join(home, "Desktop")
 
+def obter_documentos():
+    """Retorna o caminho da pasta Documentos de forma robusta."""
+    home = os.path.expanduser("~")
+    sistema = platform.system()
+
+    if sistema == "Windows":
+        try:
+            import ctypes
+            from ctypes import wintypes
+            # CSIDL_PERSONAL = 0x0005 (Meus Documentos)
+            path_buf = ctypes.create_unicode_buffer(wintypes.MAX_PATH)
+            ctypes.windll.shell32.SHGetFolderPathW(None, 5, None, 0, path_buf)
+            return path_buf.value
+        except Exception:
+            # Fallback manual para Windows com OneDrive
+            for folder in ["Documents", "OneDrive/Documents", "Documentos", "OneDrive/Documentos"]:
+                caminho = os.path.join(home, folder.replace("/", os.sep))
+                if os.path.exists(caminho):
+                    return caminho
+            return os.path.join(home, "Documents")
+
+    # Linux / macOS
+    for folder in ["Documents", "Documentos"]:
+        caminho = os.path.join(home, folder)
+        if os.path.exists(caminho):
+            return caminho
+    return os.path.join(home, "Documents")
+
 DIRETORIO_SAIDA = os.path.join(obter_desktop(), "Relatorio_Acessos")
 DIRETORIO_FOTOS = os.path.join(DIRETORIO_SAIDA, "fotos")
 ARQUIVO_CSV = os.path.join(DIRETORIO_SAIDA, "historico_acessos.csv")
@@ -2838,9 +2866,9 @@ class CentralMonitoramento(ctk.CTk):
         if not self.gravando_tudo:
             # Iniciar Registro de Eventos
             try:
-                downloads_dir = os.path.join(os.path.expanduser("~"), "Downloads")
+                docs_dir = obter_documentos()
                 timestamp = time.strftime("%Y%m%d_%H%M%S")
-                self.diretorio_eventos_atual = os.path.join(downloads_dir, f"Registro_Eventos_{timestamp}")
+                self.diretorio_eventos_atual = os.path.join(docs_dir, f"Registro_Eventos_{timestamp}")
                 os.makedirs(self.diretorio_eventos_atual, exist_ok=True)
 
                 self.gravando_tudo = True
@@ -2861,7 +2889,7 @@ class CentralMonitoramento(ctk.CTk):
                 self.recorder_eventos_thread = None
 
             self.btn_gravar_tudo.configure(text="Registrar eventos", fg_color=self.GRAY_DARK)
-            self.abrir_modal_alerta("Sucesso", "Registro de eventos finalizado e salvo em Downloads.", show_open_folder=True)
+            self.abrir_modal_alerta("Sucesso", "Registro de eventos finalizado e salvo em Documentos.", show_open_folder=True, command_folder=self.abrir_pasta_documentos)
 
     def abrir_janela_configuracoes(self):
         modal = ctk.CTkToplevel(self)
@@ -3077,7 +3105,7 @@ class CentralMonitoramento(ctk.CTk):
                                 corner_radius=0, height=40, width=140, command=modal.destroy)
         btn_nao.pack(side="right", expand=True, padx=5)
 
-    def abrir_modal_alerta(self, titulo, mensagem, show_open_folder=False):
+    def abrir_modal_alerta(self, titulo, mensagem, show_open_folder=False, command_folder=None):
         modal = ctk.CTkToplevel(self)
         modal.title(titulo)
 
@@ -3096,8 +3124,9 @@ class CentralMonitoramento(ctk.CTk):
         ctk.CTkLabel(modal, text=mensagem, font=("Roboto", 14, "bold"), text_color=self.TEXT_P, wraplength=320).pack(pady=(30, 20))
 
         if show_open_folder:
+            cmd = command_folder if command_folder else self.abrir_pasta_downloads
             btn_folder = ctk.CTkButton(modal, text="Abrir Local do Arquivo", fg_color=self.ACCENT_RED, hover_color=self.ACCENT_WINE,
-                                       corner_radius=0, height=40, command=lambda: [self.abrir_pasta_downloads(), modal.destroy()])
+                                       corner_radius=0, height=40, command=lambda: [cmd(), modal.destroy()])
             btn_folder.pack(fill="x", padx=60, pady=(0, 10))
 
         btn_ok = ctk.CTkButton(modal, text="OK", fg_color=self.GRAY_DARK, hover_color=self.TEXT_S,
@@ -4342,6 +4371,19 @@ class CentralMonitoramento(ctk.CTk):
                 subprocess.Popen(["xdg-open", downloads_dir])
         except Exception as e:
             print(f"Erro ao abrir pasta de downloads: {e}")
+
+    def abrir_pasta_documentos(self):
+        docs_dir = obter_documentos()
+        sistema = platform.system()
+        try:
+            if sistema == "Windows":
+                os.startfile(docs_dir)
+            elif sistema == "Darwin":  # macOS
+                subprocess.Popen(["open", docs_dir])
+            else:  # Linux e outros
+                subprocess.Popen(["xdg-open", docs_dir])
+        except Exception as e:
+            print(f"Erro ao abrir pasta de documentos: {e}")
 
     # --- MÉTODOS DE SCREENSHOT ---
     def capturar_imagem(self):
