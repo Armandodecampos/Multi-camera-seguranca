@@ -69,22 +69,96 @@ os.makedirs(DIRETORIO_FOTOS, exist_ok=True)
 # Cache global para evitar leituras repetitivas do CSV
 CACHE_EVENTOS_BIO = {} # Formato: { "ID_DATA": {"tem_foto": bool, "leitor": str, "dispositivo": str} }
 
+# Histórico em memória para geração rápida de relatórios (Mantém os últimos 200 eventos)
+HISTORICO_RECENTE_BIO = collections.OrderedDict()
+LOCK_BIO_DATA = threading.Lock()
+
+# Fila e Worker para I/O Biométrico (Evita travamentos por escrita de disco)
+BIO_IO_QUEUE = queue.Queue()
+
+def bio_io_worker():
+    """Processa escrita de arquivos e geração de relatórios em segundo plano."""
+    while True:
+        try:
+            tarefa = BIO_IO_QUEUE.get()
+            if tarefa is None: break
+
+            tipo = tarefa.get("tipo")
+            dados = tarefa.get("dados")
+
+            if tipo == "SAVE_EVENT":
+                # Processamento de imagem e escrita no CSV (Background)
+                base64_foto = dados.get("base64_foto")
+                id_usuario = dados.get("id_usuario")
+                data_evento = dados.get("data_evento")
+                registro = dados.get("registro") # [data_registro, id, nome, evento, disp, leitor, data_ev, caminho_foto_vazio]
+
+                caminho_foto_local = ""
+                if base64_foto:
+                    caminho_foto_local = salvar_foto_bio(base64_foto, id_usuario, data_evento)
+                    # Atualiza o caminho da foto no registro CSV
+                    registro[7] = caminho_foto_local
+
+                    # Atualiza o cache em memória com o caminho da foto real (Thread safe)
+                    chave = f"{id_usuario}_{data_evento}"
+                    with LOCK_BIO_DATA:
+                        if chave in CACHE_EVENTOS_BIO:
+                            CACHE_EVENTOS_BIO[chave]["tem_foto"] = True
+                            CACHE_EVENTOS_BIO[chave]["Caminho_Foto"] = caminho_foto_local
+                        if chave in HISTORICO_RECENTE_BIO:
+                            HISTORICO_RECENTE_BIO[chave]["Caminho_Foto"] = caminho_foto_local
+
+                arquivo_existe = os.path.exists(ARQUIVO_CSV)
+                try:
+                    with open(ARQUIVO_CSV, mode='a', newline='', encoding='utf-8') as f:
+                        writer = csv.writer(f)
+                        if not arquivo_existe:
+                            writer.writerow(["Data_Registro", "ID", "Nome", "Evento", "Dispositivo", "Leitor", "Data_Evento", "Caminho_Foto"])
+                        writer.writerow(registro)
+                except Exception as e:
+                    print(f"[-] BIO IO: Erro ao gravar CSV: {e}")
+
+            elif tipo == "UPDATE_HTML":
+                atualizar_relatorio_html()
+
+            BIO_IO_QUEUE.task_done()
+        except Exception as e:
+            print(f"[-] BIO IO: Erro no worker: {e}")
+            time.sleep(1)
+
+# Inicia o worker de I/O
+threading.Thread(target=bio_io_worker, daemon=True).start()
+
 def carregar_cache_bio():
     """Carrega eventos existentes do CSV para o cache em memória."""
-    global CACHE_EVENTOS_BIO
+    global CACHE_EVENTOS_BIO, HISTORICO_RECENTE_BIO
     if os.path.exists(ARQUIVO_CSV):
         try:
+            todos_registros = []
             with open(ARQUIVO_CSV, mode='r', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
                 for row in reader:
+                    todos_registros.append(row)
+
+            # Processa do mais antigo para o mais novo para o cache
+            with LOCK_BIO_DATA:
+                for row in todos_registros:
                     chave = f"{row['ID']}_{row['Data_Evento']}"
-                    # Sobrescreve com o dado mais recente (que pode ter foto/leitor preenchidos)
                     existente = CACHE_EVENTOS_BIO.get(chave, {})
                     CACHE_EVENTOS_BIO[chave] = {
                         "tem_foto": bool(row.get("Caminho_Foto")) or existente.get("tem_foto", False),
                         "leitor": row.get("Leitor") or existente.get("leitor", ""),
                         "dispositivo": row.get("Dispositivo") if row.get("Dispositivo") != "Geral" else existente.get("dispositivo", "")
                     }
+                    # Atualiza histórico recente (OrderedDict mantém ordem de inserção)
+                    if chave in HISTORICO_RECENTE_BIO:
+                        HISTORICO_RECENTE_BIO.move_to_end(chave)
+                    HISTORICO_RECENTE_BIO[chave] = row
+
+                    # Limita histórico recente
+                    if len(HISTORICO_RECENTE_BIO) > 200:
+                        HISTORICO_RECENTE_BIO.popitem(last=False)
+
             print(f"[*] BIO: Cache carregado com {len(CACHE_EVENTOS_BIO)} eventos.")
         except Exception as e:
             print(f"[-] BIO: Erro ao carregar cache: {e}")
@@ -144,100 +218,89 @@ def registrar_evento(id_usuario, nome, evento, dispositivo, leitor, data_evento,
     # Se o evento já existe e não estamos adicionando uma foto nova ou dados novos, ignora
     if evento_existente:
         ja_tem_foto = evento_existente.get("tem_foto", False)
-        # Se já tem foto ou não veio foto nova, e leitor/dispositivo estão preenchidos, não precisa atualizar
         if (ja_tem_foto or not base64_foto) and evento_existente.get("leitor") and evento_existente.get("dispositivo"):
             return
 
-    caminho_foto_local = ""
-    if base64_foto:
-        caminho_foto_local = salvar_foto_bio(base64_foto, id_usuario, data_evento)
-
+    # O processamento pesado de I/O é delegado ao worker para não travar o monitoramento
     data_registro = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # SEMPRE apenda ao CSV para evitar leitura/escrita total do arquivo (Performance)
-    # Deduplicação é feita na carga do cache e na geração do HTML
-    novo_registro = [data_registro, id_usuario, nome, evento, dispositivo, leitor, data_evento, caminho_foto_local]
-    arquivo_existe = os.path.exists(ARQUIVO_CSV)
-    try:
-        with open(ARQUIVO_CSV, mode='a', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            if not arquivo_existe:
-                writer.writerow(["Data_Registro", "ID", "Nome", "Evento", "Dispositivo", "Leitor", "Data_Evento", "Caminho_Foto"])
-            writer.writerow(novo_registro)
-    except Exception as e:
-        print(f"[-] BIO: Erro ao gravar CSV: {e}")
+    # Prepara registro parcial (caminho da foto será preenchido pelo worker se necessário)
+    novo_registro = [data_registro, id_usuario, nome, evento, dispositivo, leitor, data_evento, ""]
 
-    # Atualiza o cache
-    CACHE_EVENTOS_BIO[chave] = {
-        "tem_foto": bool(caminho_foto_local) or (evento_existente.get("tem_foto") if evento_existente else False),
-        "leitor": leitor or (evento_existente.get("leitor") if evento_existente else ""),
-        "dispositivo": dispositivo or (evento_existente.get("dispositivo") if evento_existente else "")
-    }
+    # Envia para o worker de I/O (Incluindo base64 para salvar no background)
+    BIO_IO_QUEUE.put({
+        "tipo": "SAVE_EVENT",
+        "dados": {
+            "registro": novo_registro,
+            "base64_foto": base64_foto,
+            "id_usuario": id_usuario,
+            "data_evento": data_evento
+        }
+    })
 
-    print(f"[+] BIO: Evento {id_usuario} - {nome}")
-
-    # Throttle: Atualiza o HTML periodicamente para economizar CPU/Disco
-    global ULTIMA_ATUALIZACAO_RELATORIO
-    agora = time.time()
-    if agora - ULTIMA_ATUALIZACAO_RELATORIO > INTERVALO_ATUALIZACAO_HTML:
-        atualizar_relatorio_html()
-        ULTIMA_ATUALIZACAO_RELATORIO = agora
-
-    # Decodifica para PIL no background para não travar a UI
+    # Decodifica e redimensiona para PIL no background IMEDIATO (sem I/O de disco)
+    # Redimensionar aqui economiza muito tempo na thread da UI.
     foto_pil = None
     if base64_foto:
         try:
             img_data = base64.b64decode(base64_foto.split(",")[1] if "," in base64_foto else base64_foto)
-            foto_pil = Image.open(io.BytesIO(img_data))
-        except:
-            pass
+            foto_raw = Image.open(io.BytesIO(img_data))
+            # Pre-redimensiona para os tamanhos usados na UI (90x90 e 70x70)
+            foto_pil = foto_raw.resize((90, 90), Image.NEAREST)
+        except: pass
+
+    # Atualiza o cache e histórico em memória (Thread safe)
+    with LOCK_BIO_DATA:
+        CACHE_EVENTOS_BIO[chave] = {
+            "tem_foto": bool(base64_foto) or (evento_existente.get("tem_foto") if evento_existente else False),
+            "leitor": leitor or (evento_existente.get("leitor") if evento_existente else ""),
+            "dispositivo": dispositivo or (evento_existente.get("dispositivo") if evento_existente else ""),
+            "Caminho_Foto": evento_existente.get("Caminho_Foto") if evento_existente else ""
+        }
+
+        registro_mem = {
+            "Data_Registro": data_registro, "ID": id_usuario, "Nome": nome, "Evento": evento,
+            "Dispositivo": dispositivo, "Leitor": leitor, "Data_Evento": data_evento,
+            "Caminho_Foto": CACHE_EVENTOS_BIO[chave]["Caminho_Foto"],
+            "foto_pil": foto_pil # Mantém objeto PIL em memória para UI e mosaico
+        }
+        if chave in HISTORICO_RECENTE_BIO:
+            HISTORICO_RECENTE_BIO.move_to_end(chave)
+        HISTORICO_RECENTE_BIO[chave] = registro_mem
+        if len(HISTORICO_RECENTE_BIO) > 200:
+            HISTORICO_RECENTE_BIO.popitem(last=False)
+
+    print(f"[+] BIO: Evento {id_usuario} - {nome}")
 
     # Notifica a UI
     if queue_ui:
         queue_ui.put({
             "type": "BIO_EVENT",
-            "data": {
-                "id_usuario": id_usuario,
-                "nome": nome,
-                "evento": evento,
-                "dispositivo": dispositivo,
-                "leitor": leitor,
-                "data_evento": data_evento,
-                "foto": base64_foto,
-                "foto_pil": foto_pil
-            }
+            "data": registro_mem
         })
 
-def atualizar_relatorio_html():
-    """Gera ou atualiza o dashboard estático externo em HTML com busca."""
-    registros_dict = {}
-    if os.path.exists(ARQUIVO_CSV):
-        try:
-            with open(ARQUIVO_CSV, mode='r', encoding='utf-8') as f:
-                reader = csv.DictReader(f)
-                for r in reader:
-                    chave = f"{r['ID']}_{r['Data_Evento']}"
-                    # Se já existe, mescla informações
-                    if chave in registros_dict:
-                        existente = registros_dict[chave]
-                        if r.get("Caminho_Foto"): existente["Caminho_Foto"] = r["Caminho_Foto"]
-                        if r.get("Leitor"): existente["Leitor"] = r["Leitor"]
-                        if r.get("Dispositivo") and r["Dispositivo"] != "Geral":
-                            existente["Dispositivo"] = r["Dispositivo"]
-                    else:
-                        registros_dict[chave] = r
-        except Exception as e:
-            print(f"[-] BIO: Erro ao ler CSV para HTML: {e}")
+    # Throttle: Solicita atualização do HTML ao worker
+    global ULTIMA_ATUALIZACAO_RELATORIO
+    agora = time.time()
+    if agora - ULTIMA_ATUALIZACAO_RELATORIO > INTERVALO_ATUALIZACAO_HTML:
+        BIO_IO_QUEUE.put({"tipo": "UPDATE_HTML"})
+        ULTIMA_ATUALIZACAO_RELATORIO = agora
 
-    # Converte para lista e limita aos 200 mais recentes
-    registros = list(registros_dict.values())
-    # Ordena por Data_Registro descendente (assumindo que o último registro no CSV é o mais novo)
+def atualizar_relatorio_html():
+    """Gera ou atualiza o dashboard estático externo em HTML usando cache em memória (Performance)."""
+    # Pega snapshot do histórico recente para evitar lock longo
+    with LOCK_BIO_DATA:
+        registros = list(HISTORICO_RECENTE_BIO.values())
+
+    # Ordem decrescente (mais novos primeiro)
     registros.reverse()
-    registros = registros[:200]
 
     def gerar_html(path_fotos_prefix=""):
         ultima_atualizacao = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
-        html = f"""<!DOCTYPE html>
+
+        # Buffer de strings para maior performance
+        buffer = []
+        buffer.append(f"""<!DOCTYPE html>
 <html lang="pt-br">
 <head>
     <meta charset="UTF-8">
@@ -258,53 +321,45 @@ def atualizar_relatorio_html():
         </div>
 
         <div id="eventGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-"""
+""")
         for r in registros:
             caminho_foto = r.get('Caminho_Foto', '')
-            if caminho_foto:
-                img_tag_src = f"{path_fotos_prefix}fotos/{os.path.basename(caminho_foto)}"
-            else:
-                img_tag_src = "https://via.placeholder.com/150"
+            img_tag_src = f"{path_fotos_prefix}fotos/{os.path.basename(caminho_foto)}" if caminho_foto else "https://via.placeholder.com/150"
+            disp = r.get("Dispositivo", "")
+            leitor = r.get("Leitor", "")
+            evento = r.get("Evento", "")
 
-            disp_html = f'<p class="text-sm text-gray-300 font-medium mt-0.5">🖥️ {r.get("Dispositivo", "")}</p>'
-            leitor_html = f'<p class="text-xs text-teal-400 font-semibold mt-0.5">Leitor: {r.get("Leitor", "")}</p>'
-            evento_html = f'<p class="text-sm text-yellow-400 font-medium mt-1">{r.get("Evento", "")}</p>'
-
-            html += f"""
+            buffer.append(f"""
             <div class="evento-card bg-gray-800 rounded-xl overflow-hidden shadow-lg border border-gray-700 p-4 transition-all duration-300 hover:border-teal-500">
                 <div class="flex justify-center mb-4">
                     <img class="h-44 object-contain rounded-lg" src="{img_tag_src}" onerror="this.src='https://via.placeholder.com/150'">
                 </div>
                 <span class="inline-block px-2 py-1 text-xs font-semibold rounded-full bg-teal-900 text-teal-300 mb-2">ID: {r['ID']}</span>
                 <h3 class="text-lg font-bold text-white truncate">{r['Nome']}</h3>
-                {evento_html} {leitor_html} {disp_html}
+                <p class="text-sm text-yellow-400 font-medium mt-1">{evento}</p>
+                <p class="text-xs text-teal-400 font-semibold mt-0.5">Leitor: {leitor}</p>
+                <p class="text-sm text-gray-300 font-medium mt-0.5">🖥️ {disp}</p>
                 <div class="mt-4 pt-3 border-t border-gray-700 text-xs text-gray-400">
                     <div><strong>Evento em:</strong> {r['Data_Evento']}</div>
                 </div>
-            </div>
-"""
-        html += """
+            </div>""")
+
+        buffer.append("""
         </div>
     </div>
-
     <script>
         document.getElementById('searchInput').addEventListener('input', function() {
             const searchTerm = this.value.toLowerCase();
             const cards = document.querySelectorAll('.evento-card');
-
             cards.forEach(card => {
                 const text = card.textContent.toLowerCase();
-                if (text.includes(searchTerm)) {
-                    card.style.display = 'block';
-                } else {
-                    card.style.display = 'none';
-                }
+                card.style.display = text.includes(searchTerm) ? 'block' : 'none';
             });
         });
     </script>
 </body>
-</html>"""
-        return html
+</html>""")
+        return "".join(buffer)
 
     # Escreve o relatório na pasta de relatórios
     content_relatorio = gerar_html("")
@@ -1531,76 +1586,52 @@ class CentralMonitoramento(ctk.CTk):
             try: ultimo_card.destroy()
             except: pass
 
-        # Borda colorida à esquerda (ACCENT_RED)
+        # Layout simplificado (Flat) para reduzir overhead de frames
         borda_cor = self.ACCENT_RED if dados.get("foto") else "#f59e0b"
-        borda_l = ctk.CTkFrame(card, width=3, fg_color=borda_cor)
-        borda_l.pack(side="left", fill="y")
+        card.configure(border_color=borda_cor, border_width=1)
 
-        inner = ctk.CTkFrame(card, fg_color="transparent")
-        inner.pack(side="left", fill="x", expand=True, padx=4, pady=4)
-
-        # Foto e Info (Foto 100x100)
-        header_f = ctk.CTkFrame(inner, fg_color="transparent")
-        header_f.pack(fill="x")
-
-        tem_foto = False
+        # Foto (Esquerda)
         img_pil = dados.get("foto_pil")
-
-        # Se não veio processado, tenta processar (fallback)
         if not img_pil and dados.get("foto"):
             try:
                 img_data = base64.b64decode(dados["foto"].split(",")[1] if "," in dados["foto"] else dados["foto"])
                 img_pil = Image.open(io.BytesIO(img_data))
             except: pass
 
+        tem_foto = False
         if img_pil:
             try:
-                img_ctk = ctk.CTkImage(img_pil, size=(100, 100))
-                lbl_img = ctk.CTkLabel(header_f, image=img_ctk, text="", width=100, height=100)
-                lbl_img.pack(side="left", padx=(0, 6))
+                img_ctk = ctk.CTkImage(img_pil, size=(90, 90))
+                lbl_img = ctk.CTkLabel(card, image=img_ctk, text="", width=90, height=90)
+                lbl_img.pack(side="left", padx=5, pady=5)
                 tem_foto = True
             except:
-                ctk.CTkLabel(header_f, text="👤", font=("Roboto", 40)).pack(side="left", padx=(0, 6))
+                ctk.CTkLabel(card, text="👤", font=("Roboto", 30)).pack(side="left", padx=5)
         else:
-            ctk.CTkLabel(header_f, text="👤", font=("Roboto", 40)).pack(side="left", padx=(0, 6))
+            ctk.CTkLabel(card, text="👤", font=("Roboto", 30)).pack(side="left", padx=5)
 
-        info_f = ctk.CTkFrame(header_f, fg_color="transparent")
-        info_f.pack(side="left", fill="x", expand=True)
+        # Container de Info
+        info_f = ctk.CTkFrame(card, fg_color="transparent")
+        info_f.pack(side="left", fill="both", expand=True, padx=5, pady=2)
 
-        ctk.CTkLabel(info_f, text=f"ID: {dados['id_usuario']}", font=("Roboto", 10, "bold"),
-                     text_color=self.ACCENT_RED, fg_color="#000000", corner_radius=2).pack(anchor="w")
+        # ID e Hora em uma linha (sem frame extra)
+        lbl_id_hora = ctk.CTkLabel(info_f, text=f"ID: {dados['id_usuario']}  •  🕒 {dados['data_evento'].split(' ')[1]}",
+                                   font=("Roboto", 9, "bold"), text_color=self.ACCENT_RED, anchor="w")
+        lbl_id_hora.pack(fill="x")
 
-        # Nome maior e em negrito
-        lbl_nome_bio = ctk.CTkLabel(info_f, text=dados["nome"].upper(), font=("Roboto", 12, "bold"), text_color="white",
-                                    anchor="w", justify="left", wraplength=260)
-        lbl_nome_bio.pack(fill="x", anchor="w", pady=(1, 0))
-        try: lbl_nome_bio._label.configure(wraplength=260)
-        except: pass
+        # Nome
+        lbl_nome = ctk.CTkLabel(info_f, text=dados["nome"].upper(), font=("Roboto", 11, "bold"), text_color="white", anchor="w", justify="left", wraplength=250)
+        lbl_nome.pack(fill="x")
 
-        # Data/Hora logo abaixo do nome
-        ctk.CTkLabel(info_f, text=f"🕒 {dados['data_evento']}", font=("Roboto", 10), text_color="#f59e0b").pack(anchor="w", pady=(1, 0))
+        # Detalhes consolidados em menos labels
+        detalhes = []
+        if dados.get("leitor"): detalhes.append(f"📍 {dados['leitor']}")
+        if dados.get("evento"): detalhes.append(dados['evento'])
+        if dados.get("dispositivo"): detalhes.append(f"🖥️ {dados['dispositivo']}")
 
-        # Detalhes (Leitor, Evento, Dispositivo) agora dentro de info_f para economizar espaço vertical
-        if dados.get("leitor"):
-            lbl_leitor_bio = ctk.CTkLabel(info_f, text=f"📍 {dados['leitor']}", font=("Roboto", 10, "bold"), text_color=self.ACCENT_RED,
-                                          anchor="w", justify="left", wraplength=260)
-            lbl_leitor_bio.pack(fill="x", anchor="w")
-            try: lbl_leitor_bio._label.configure(wraplength=260)
-            except: pass
-
-        if dados.get("evento"):
-            lbl_evento_bio = ctk.CTkLabel(info_f, text=dados["evento"], font=("Roboto", 10), text_color="#facc15",
-                                          anchor="w", justify="left", wraplength=260)
-            lbl_evento_bio.pack(fill="x", anchor="w")
-            try: lbl_evento_bio._label.configure(wraplength=260)
-            except: pass
-
-        if dados.get("dispositivo"):
-            lbl_disp_bio = ctk.CTkLabel(info_f, text=f"🖥️ {dados['dispositivo']}", font=("Roboto", 10), text_color="#999999",
-                                        anchor="w", justify="left", wraplength=260)
-            lbl_disp_bio.pack(fill="x", anchor="w")
-            try: lbl_disp_bio._label.configure(wraplength=260)
-            except: pass
+        if detalhes:
+            lbl_detalhe = ctk.CTkLabel(info_f, text="\n".join(detalhes), font=("Roboto", 9), text_color="#bbbbbb", anchor="w", justify="left", wraplength=260)
+            lbl_detalhe.pack(fill="x")
 
         self.eventos_bio_cards[id_reg] = {'frame': card, 'tem_foto': tem_foto}
         self.lbl_total_bio.configure(text=f"{len(self.eventos_bio_cards)} total")
@@ -2563,9 +2594,8 @@ class CentralMonitoramento(ctk.CTk):
 
             if foto_pil:
                 try:
-                    # Redimensiona apenas para exibição no card
-                    foto_thumb = foto_pil.resize((70, 70), Image.NEAREST)
-                    img.paste(foto_thumb, (20, y_cursor+10))
+                    # Usa a foto já redimensionada para o mosaico/card
+                    img.paste(foto_pil.resize((70, 70), Image.NEAREST), (20, y_cursor+10))
                     x_txt = 100
                 except: pass
 
