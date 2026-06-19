@@ -2980,37 +2980,35 @@ class CentralMonitoramento(ctk.CTk):
         btn_bloquear.pack(pady=10)
 
     def bloquear_sistema(self):
-        """Bloqueia a interface e exibe um overlay com cadeado."""
+        """Bloqueia a interface e exibe um overlay transparente com cadeado discreto."""
         if self.sistema_bloqueado: return
         self.sistema_bloqueado = True
 
-        # Cria overlay de bloqueio
-        self.overlay_bloqueio = ctk.CTkFrame(self, fg_color="black", corner_radius=0)
+        # Cria overlay de bloqueio transparente
+        self.overlay_bloqueio = ctk.CTkFrame(self, fg_color="transparent", corner_radius=0)
         self.overlay_bloqueio.place(relx=0, rely=0, relwidth=1, relheight=1)
         self.overlay_bloqueio.lift()
-        self.overlay_bloqueio.grab_set() # Captura todos os eventos
+        self.overlay_bloqueio.grab_set() # Captura todos os eventos, mas permite ver o fundo
 
-        # Botão de cadeado centralizado
-        btn_destravar = ctk.CTkButton(self.overlay_bloqueio, text="🔒", font=("Roboto", 80),
-                                       width=200, height=200, corner_radius=100,
+        # Botão de cadeado discreto no canto inferior direito
+        self.btn_destravar_overlay = ctk.CTkButton(self.overlay_bloqueio, text="🔒", font=("Roboto", 30),
+                                       width=60, height=60, corner_radius=30,
                                        fg_color=self.ACCENT_RED, hover_color=self.ACCENT_WINE,
                                        command=self.solicitar_desbloqueio)
-        btn_destravar.place(relx=0.5, rely=0.5, anchor="center")
-
-        ctk.CTkLabel(self.overlay_bloqueio, text="SISTEMA BLOQUEADO", font=("Roboto", 24, "bold"),
-                      text_color="white").place(relx=0.5, rely=0.65, anchor="center")
-
-        # Esconde botões de controle se estiverem visíveis
-        self.btn_expandir.place_forget()
-        self.btn_gravar.place_forget()
-        self.btn_mais_opcoes.place_forget()
+        self.btn_destravar_overlay.place(relx=0.99, rely=0.99, anchor="se")
 
     def solicitar_desbloqueio(self):
         """Libera o grab temporariamente para o modal de senha."""
         if self.overlay_bloqueio:
             self.overlay_bloqueio.grab_release()
 
+        if hasattr(self, 'btn_destravar_overlay'):
+            self.btn_destravar_overlay.configure(state="disabled")
+
         def reativar_grab():
+            if hasattr(self, 'btn_destravar_overlay'):
+                try: self.btn_destravar_overlay.configure(state="normal")
+                except: pass
             if self.sistema_bloqueado and self.overlay_bloqueio:
                 self.overlay_bloqueio.grab_set()
 
@@ -3115,8 +3113,7 @@ class CentralMonitoramento(ctk.CTk):
             if valor == "passwordadm":
                 callback()
             else:
-                self.abrir_modal_alerta("Erro", "Senha incorreta.")
-                if cancel_callback: cancel_callback()
+                self.abrir_modal_alerta("Erro", "Senha incorreta.", on_close=cancel_callback)
 
         self.abrir_modal_input(titulo="Autenticação", mensagem="Digite a senha de administrador:",
                                callback=verificar, show="*", cancel_callback=cancel_callback)
@@ -3188,7 +3185,7 @@ class CentralMonitoramento(ctk.CTk):
                                 corner_radius=0, height=40, width=140, command=modal.destroy)
         btn_nao.pack(side="right", expand=True, padx=5)
 
-    def abrir_modal_alerta(self, titulo, mensagem, show_open_folder=False, command_folder=None):
+    def abrir_modal_alerta(self, titulo, mensagem, show_open_folder=False, command_folder=None, on_close=None):
         modal = ctk.CTkToplevel(self)
         modal.title(titulo)
 
@@ -3212,8 +3209,12 @@ class CentralMonitoramento(ctk.CTk):
                                        corner_radius=0, height=40, command=lambda: [cmd(), modal.destroy()])
             btn_folder.pack(fill="x", padx=60, pady=(0, 10))
 
+        def fechar():
+            modal.destroy()
+            if on_close: on_close()
+
         btn_ok = ctk.CTkButton(modal, text="OK", fg_color=self.GRAY_DARK, hover_color=self.TEXT_S,
-                               corner_radius=0, height=40, command=modal.destroy)
+                               corner_radius=0, height=40, command=fechar)
         btn_ok.pack(fill="x", padx=60, pady=10)
 
     def recriar_label_slot(self, idx):
