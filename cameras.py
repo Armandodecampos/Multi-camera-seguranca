@@ -886,8 +886,8 @@ class MosaicoScreenshotThread(threading.Thread):
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
                     caminho_img = os.path.join(self.diretorio_saida, f"evento_{timestamp}.jpg")
 
-                    # Salva como JPEG usando OpenCV (Mais rápido e economiza conversão)
-                    cv2.imwrite(caminho_img, mosaico_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+                    # Salva como JPEG usando OpenCV com qualidade máxima (95)
+                    cv2.imwrite(caminho_img, mosaico_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
 
                     proximo_print = agora + self.intervalo
                 except Exception as e:
@@ -913,6 +913,7 @@ class CameraHandler:
         self.rodando = False
         self.frame_pil = None
         self.frame_bgr = None # Cache BGR para mosaico (OpenCV)
+        self.frame_full_bgr = None # Frame original sem redimensionamento para alta qualidade
         self.novo_frame = False
         self.lock = threading.Lock()
         self.conectado = False
@@ -1193,6 +1194,7 @@ class CameraHandler:
                     with self.lock:
                         self.frame_pil = pil_img
                         self.frame_bgr = frame_res # Mantém versão original BGR para mosaico
+                        self.frame_full_bgr = frame.copy() # Mantém frame original para alta qualidade
                         self.novo_frame = True
                 except Exception as e:
                     time.sleep(0.01)
@@ -2792,8 +2794,8 @@ class CentralMonitoramento(ctk.CTk):
 
             if foto_pil:
                 try:
-                    # Usa a foto já redimensionada para o mosaico/card
-                    img.paste(foto_pil.resize((70, 70), Image.NEAREST), (20, y_cursor+10))
+                    # Usa a foto já redimensionada para o mosaico/card com alta qualidade
+                    img.paste(foto_pil.resize((70, 70), Image.LANCZOS), (20, y_cursor+10))
                     x_txt = 100
                 except: pass
 
@@ -2819,8 +2821,8 @@ class CentralMonitoramento(ctk.CTk):
             rows = self.grid_rows
             num_slots = self.num_slots
 
-        slot_w, slot_h = 320, 240
-        bio_w = 300
+        slot_w, slot_h = 640, 480
+        bio_w = 400
         mosaico_w = cols * slot_w
         mosaico_h = rows * slot_h
         total_w = mosaico_w + bio_w
@@ -2837,14 +2839,17 @@ class CentralMonitoramento(ctk.CTk):
             y_off, x_start = r * slot_h, c * slot_w
 
             handler = handlers_snapshot.get(ip)
-            frame_bgr = None
+            frame_to_resize = None
             if handler and handler != "CONECTANDO":
                 with handler.lock:
-                    frame_bgr = handler.frame_bgr
+                    # Tenta usar o frame de alta resolução se disponível
+                    frame_to_resize = getattr(handler, 'frame_full_bgr', None)
+                    if frame_to_resize is None:
+                        frame_to_resize = handler.frame_bgr
 
-            if frame_bgr is not None:
-                # Redimensiona usando OpenCV (Mais rápido que PIL)
-                frame_res = cv2.resize(frame_bgr, (slot_w, slot_h), interpolation=cv2.INTER_NEAREST)
+            if frame_to_resize is not None:
+                # Redimensiona usando OpenCV com CUBIC para melhor qualidade
+                frame_res = cv2.resize(frame_to_resize, (slot_w, slot_h), interpolation=cv2.INTER_CUBIC)
                 canvas[y_off:y_off+slot_h, x_start:x_start+slot_w] = frame_res
             else:
                 # Slot vazio ou offline (Borda e texto)
@@ -4401,22 +4406,28 @@ class CentralMonitoramento(ctk.CTk):
             self.abrir_modal_alerta("Erro", "A câmera selecionada não está conectada.")
             return
 
-        # Pega o frame atual
+        # Pega o frame atual (priorizando alta qualidade para o histórico)
         with handler.lock:
-            frame_pil = handler.frame_pil
+            frame_to_save_bgr = getattr(handler, 'frame_full_bgr', None)
+            frame_thumb_pil = handler.frame_pil
 
-        if frame_pil:
+        if frame_thumb_pil:
             try:
                 ip_limpo = self.ip_selecionado.replace(".", "_")
                 timestamp = time.strftime("%Y%m%d_%H%M%S")
 
-                # 1. Salva para o histórico (timestamp)
+                # 1. Salva para o histórico (timestamp) - Alta Qualidade se disponível
                 caminho_hist = os.path.join(self.diretorio_prints, f"{ip_limpo}_{timestamp}.png")
-                frame_pil.save(caminho_hist)
+                if frame_to_save_bgr is not None:
+                    # Converte BGR para RGB para o PIL
+                    rgb_full = cv2.cvtColor(frame_to_save_bgr, cv2.COLOR_BGR2RGB)
+                    Image.fromarray(rgb_full).save(caminho_hist)
+                else:
+                    frame_thumb_pil.save(caminho_hist)
 
-                # 2. Salva como thumbnail (sobrescreve o padrão do IP)
+                # 2. Salva como thumbnail (sobrescreve o padrão do IP) - Qualidade UI
                 caminho_thumb = os.path.join(self.diretorio_prints, f"{ip_limpo}.png")
-                frame_pil.save(caminho_thumb)
+                frame_thumb_pil.save(caminho_thumb)
 
                 self.abrir_modal_alerta("Sucesso", f"Imagem capturada com sucesso!\nSalva em: {os.path.basename(caminho_hist)}")
 
