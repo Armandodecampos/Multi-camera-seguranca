@@ -1389,6 +1389,8 @@ class CentralMonitoramento(ctk.CTk):
         self.eventos_bio_cards = {}
         self.lista_cards_bio = [] # Rastreador de ordem para CTkScrollableFrame
         self.queue_bio = queue.Queue()
+        self.sistema_bloqueado = False
+        self.overlay_bloqueio = None
 
         if dados_iniciais:
             self.dados_cameras = dados_iniciais.get("config", {})
@@ -1689,6 +1691,7 @@ class CentralMonitoramento(ctk.CTk):
         self.loop_exibicao()
 
     def _iniciar_monitoramento_bio(self):
+        if self.sistema_bloqueado: return
         if hasattr(self, 'bio_thread') and self.bio_thread.is_alive():
             self.abrir_modal_alerta("Aviso", "O monitoramento biométrico já está em execução.")
             return
@@ -1704,6 +1707,7 @@ class CentralMonitoramento(ctk.CTk):
         self.bio_thread.start()
 
     def _parar_monitoramento_bio(self):
+        if self.sistema_bloqueado: return
         if hasattr(self, 'bio_thread'):
             print("SISTEMA: Parando monitoramento biométrico...")
             self.btn_parar_bio.configure(state="disabled", text="Parando...")
@@ -1920,6 +1924,7 @@ class CentralMonitoramento(ctk.CTk):
 
     # --- LÓGICA PTZ ---
     def ao_scroll_mouse(self, event):
+        if self.sistema_bloqueado: return "break"
         # Verifica se o mouse está sobre a sidebar para rolar as listas
         try:
             if self.sidebar.winfo_viewable():
@@ -2007,6 +2012,7 @@ class CentralMonitoramento(ctk.CTk):
         self.zoom_stop_timer = None
 
     def _atualizar_estado_ctrl(self, event, estado):
+        if self.sistema_bloqueado: return
         self.ctrl_pressionado = estado
         self.config_cursor_agarrar(estado)
 
@@ -2016,6 +2022,7 @@ class CentralMonitoramento(ctk.CTk):
         except: pass
 
     def ao_arrastar_slot(self, event, index):
+        if self.sistema_bloqueado: return
         if not self.press_data: return
 
         dx = event.x_root - self.press_data["x"]
@@ -2147,6 +2154,7 @@ class CentralMonitoramento(ctk.CTk):
         self.btn_sair_fs.lift()
 
     def sair_tela_cheia(self):
+        if self.sistema_bloqueado: return
         if not self.em_tela_cheia: return
         self.em_tela_cheia = False
         if hasattr(self, 'btn_sair_fs'): self.btn_sair_fs.destroy()
@@ -2334,6 +2342,7 @@ class CentralMonitoramento(ctk.CTk):
         self.atualizar_botoes_controle()
 
     def ao_pressionar_slot(self, event, index):
+        if self.sistema_bloqueado: return
         self.selecionar_slot(index)
         self.press_data = {
             "index": index,
@@ -2344,6 +2353,7 @@ class CentralMonitoramento(ctk.CTk):
         }
 
     def ao_soltar_slot(self, event, index):
+        if self.sistema_bloqueado: return
         if not self.press_data: return
         self.fechar_fantasma_drag()
 
@@ -2457,6 +2467,7 @@ class CentralMonitoramento(ctk.CTk):
 
     def ao_tecla_direcional(self, direcao):
         """Gerencia navegação por teclado: PTZ se maximizado, Grid caso contrário."""
+        if self.sistema_bloqueado: return
         # Se estiver em um campo de entrada, não navega
         foco = self.focus_get()
         if isinstance(foco, (ctk.CTkEntry, ctk.CTkTextbox)):
@@ -2469,11 +2480,13 @@ class CentralMonitoramento(ctk.CTk):
 
     def ao_tecla_solta(self, direcao):
         """Para o PTZ apenas se estivermos no modo PTZ."""
+        if self.sistema_bloqueado: return
         if self.slot_maximized is not None:
             self.comando_ptz("STOP")
 
     def navegar_grid(self, direcao):
         """Move o viewport do grid na direção especificada, se válido."""
+        if self.sistema_bloqueado: return
         # Se algum slot estiver maximizado, não permite navegar (opcional, mas recomendado)
         if self.slot_maximized is not None: return
 
@@ -2627,6 +2640,7 @@ class CentralMonitoramento(ctk.CTk):
         return grid
 
     def atualizar_botoes_controle(self):
+        if self.sistema_bloqueado: return
         # Decide qual slot deve conter os botões
         idx = self.slot_maximized if self.slot_maximized is not None else self.slot_selecionado
 
@@ -2863,6 +2877,7 @@ class CentralMonitoramento(ctk.CTk):
         return canvas
 
     def toggle_gravacao_tudo(self):
+        if self.sistema_bloqueado: return
         if not self.gravando_tudo:
             # Iniciar Registro de Eventos
             try:
@@ -2892,16 +2907,17 @@ class CentralMonitoramento(ctk.CTk):
             self.abrir_modal_alerta("Sucesso", "Registro de eventos finalizado e salvo em Documentos.", show_open_folder=True, command_folder=self.abrir_pasta_documentos)
 
     def abrir_janela_configuracoes(self):
+        if self.sistema_bloqueado: return
         modal = ctk.CTkToplevel(self)
         modal.title("Configurações")
-        modal.geometry("400x420")
+        modal.geometry("400x500")
         modal.resizable(False, False)
         modal.attributes("-topmost", True)
 
         try:
             self.update_idletasks()
             x = self.winfo_x() + (self.winfo_width() // 2) - 200
-            y = self.winfo_y() + (self.winfo_height() // 2) - 150
+            y = self.winfo_y() + (self.winfo_height() // 2) - 250
             modal.geometry(f"+{x}+{y}")
         except: pass
 
@@ -2950,6 +2966,68 @@ class CentralMonitoramento(ctk.CTk):
                                      fg_color=self.GRAY_DARK, hover_color=self.ACCENT_RED,
                                      command=aplicar_custom_grid)
         btn_aplicar.pack(side="left")
+
+        # Botão para Bloquear Sistema
+        ctk.CTkLabel(modal, text="Segurança:", font=("Roboto", 14), text_color=self.TEXT_S).pack(pady=(25, 5))
+        def acao_bloquear():
+            modal.destroy()
+            self.solicitar_senha(self.bloquear_sistema)
+
+        btn_bloquear = ctk.CTkButton(modal, text="🔒 Bloquear Sistema", width=250, height=40,
+                                      fg_color=self.ACCENT_RED, hover_color=self.ACCENT_WINE,
+                                      font=("Roboto", 14, "bold"),
+                                      command=acao_bloquear)
+        btn_bloquear.pack(pady=10)
+
+    def bloquear_sistema(self):
+        """Bloqueia a interface e exibe um overlay com cadeado."""
+        if self.sistema_bloqueado: return
+        self.sistema_bloqueado = True
+
+        # Cria overlay de bloqueio
+        self.overlay_bloqueio = ctk.CTkFrame(self, fg_color="black", corner_radius=0)
+        self.overlay_bloqueio.place(relx=0, rely=0, relwidth=1, relheight=1)
+        self.overlay_bloqueio.lift()
+        self.overlay_bloqueio.grab_set() # Captura todos os eventos
+
+        # Botão de cadeado centralizado
+        btn_destravar = ctk.CTkButton(self.overlay_bloqueio, text="🔒", font=("Roboto", 80),
+                                       width=200, height=200, corner_radius=100,
+                                       fg_color=self.ACCENT_RED, hover_color=self.ACCENT_WINE,
+                                       command=self.solicitar_desbloqueio)
+        btn_destravar.place(relx=0.5, rely=0.5, anchor="center")
+
+        ctk.CTkLabel(self.overlay_bloqueio, text="SISTEMA BLOQUEADO", font=("Roboto", 24, "bold"),
+                      text_color="white").place(relx=0.5, rely=0.65, anchor="center")
+
+        # Esconde botões de controle se estiverem visíveis
+        self.btn_expandir.place_forget()
+        self.btn_gravar.place_forget()
+        self.btn_mais_opcoes.place_forget()
+
+    def solicitar_desbloqueio(self):
+        """Libera o grab temporariamente para o modal de senha."""
+        if self.overlay_bloqueio:
+            self.overlay_bloqueio.grab_release()
+
+        def reativar_grab():
+            if self.sistema_bloqueado and self.overlay_bloqueio:
+                self.overlay_bloqueio.grab_set()
+
+        self.solicitar_senha(self.desbloquear_sistema, cancel_callback=reativar_grab)
+
+    def desbloquear_sistema(self):
+        """Remove o overlay de bloqueio e libera a interface."""
+        if not self.sistema_bloqueado: return
+        self.sistema_bloqueado = False
+
+        if self.overlay_bloqueio:
+            self.overlay_bloqueio.grab_release()
+            self.overlay_bloqueio.destroy()
+            self.overlay_bloqueio = None
+
+        # Restaura botões de controle se necessário
+        self.atualizar_botoes_controle()
 
     def mudar_quantidade_slots(self, nova_qtd):
         """Altera a quantidade de slots do grid e reconstrói a interface."""
@@ -3032,17 +3110,18 @@ class CentralMonitoramento(ctk.CTk):
                                      command=lambda: [modal.destroy(), self.solicitar_senha(lambda: self.confirmar_exclusao_camera_da_lista(ip))])
         btn_excluir.pack(fill="x", padx=40, pady=5)
 
-    def solicitar_senha(self, callback):
+    def solicitar_senha(self, callback, cancel_callback=None):
         def verificar(valor):
             if valor == "passwordadm":
                 callback()
             else:
                 self.abrir_modal_alerta("Erro", "Senha incorreta.")
+                if cancel_callback: cancel_callback()
 
         self.abrir_modal_input(titulo="Autenticação", mensagem="Digite a senha de administrador:",
-                               callback=verificar, show="*")
+                               callback=verificar, show="*", cancel_callback=cancel_callback)
 
-    def abrir_modal_input(self, titulo, mensagem, callback, valor_inicial="", show=""):
+    def abrir_modal_input(self, titulo, mensagem, callback, valor_inicial="", show="", cancel_callback=None):
         modal = ctk.CTkToplevel(self)
         modal.title(titulo)
         modal.geometry("400x250")
@@ -3072,8 +3151,12 @@ class CentralMonitoramento(ctk.CTk):
                                       corner_radius=0, height=40, command=confirmar)
         btn_confirmar.pack(fill="x", padx=40, pady=5)
 
+        def cancelar():
+            modal.destroy()
+            if cancel_callback: cancel_callback()
+
         btn_cancelar = ctk.CTkButton(modal, text="Cancelar", fg_color=self.GRAY_DARK, hover_color=self.TEXT_S,
-                                     corner_radius=0, height=40, command=modal.destroy)
+                                     corner_radius=0, height=40, command=cancelar)
         btn_cancelar.pack(fill="x", padx=40, pady=5)
 
         modal.bind("<Return>", lambda e: confirmar())
@@ -3235,6 +3318,7 @@ class CentralMonitoramento(ctk.CTk):
                 self.iniciar_conexao_assincrona(ip, canal_alvo)
 
     def ao_pressionar_sidebar(self, event, ip):
+        if self.sistema_bloqueado: return
         self.press_data = {
             "ip": ip,
             "x_start": event.x_root,
@@ -3244,11 +3328,13 @@ class CentralMonitoramento(ctk.CTk):
         }
 
     def ao_arrastar_sidebar(self, event, ip):
+        if self.sistema_bloqueado: return
         if not self.press_data: return
         nome = self.dados_cameras.get(ip, ip)
         self.exibir_fantasma_drag(event.x_root, event.y_root, nome)
 
     def ao_soltar_sidebar(self, event, ip):
+        if self.sistema_bloqueado: return
         if not self.press_data: return
         self.fechar_fantasma_drag()
 
