@@ -1334,9 +1334,11 @@ class CentralMonitoramento(ctk.CTk):
         self.arquivo_janela = os.path.join(user_dir, "config_janela_abi.json")
         self.arquivo_predefinicoes = os.path.join(user_dir, "predefinicoes_grid_abi.json")
         self.arquivo_ips = os.path.join(user_dir, "lista_ips_abi.json")
+        self.arquivo_canais = os.path.join(user_dir, "config_canais_abi.json")
         self.diretorio_prints = os.path.join(user_dir, "cameras_prints_abi")
         os.makedirs(self.diretorio_prints, exist_ok=True)
 
+        self.canais_manuais = {}
         self.botoes_referencia = {}
         self.ip_selecionado = None
         self.predefinicao_widgets = {}
@@ -1389,6 +1391,8 @@ class CentralMonitoramento(ctk.CTk):
         self.offset_x = 0
         self.offset_y = 0
         self.eventos_bio_cards = {}
+        self.slot_canal_frames = []
+        self.slot_canal_btns = []
         self.lista_cards_bio = [] # Rastreador de ordem para CTkScrollableFrame
         self.queue_bio = queue.Queue()
 
@@ -1396,6 +1400,7 @@ class CentralMonitoramento(ctk.CTk):
             self.dados_cameras = dados_iniciais.get("config", {})
             self.predefinicoes = dados_iniciais.get("predefinicoes", {})
             self.ips_unicos = dados_iniciais.get("ips", [])
+            self.carregar_canais_manuais()
 
             # Regra de Inicialização ABI:
             # 1. Se houver predefinições, carrega a primeira da lista (ordem alfabética)
@@ -1430,6 +1435,7 @@ class CentralMonitoramento(ctk.CTk):
             self.predefinicoes = self.carregar_predefinicoes()
             self.ips_unicos = self.carregar_lista_ips()
             self.dados_cameras = self.carregar_config()
+            self.carregar_canais_manuais()
 
             if self.predefinicoes:
                 nomes_ordenados = sorted(self.predefinicoes.keys(), key=str.lower)
@@ -2300,6 +2306,11 @@ class CentralMonitoramento(ctk.CTk):
 
     def obter_canal_alvo(self, ip):
         """Define se deve usar canal 101 (Main) ou 102 (Sub) baseado no estado do sistema."""
+        # Se houver uma escolha manual e não for 'Auto', usa ela
+        manual = self.canais_manuais.get(ip)
+        if manual and str(manual).isdigit():
+            return int(manual)
+
         # Se estiver maximizada, o IP maximizado usa 101
         if self.slot_maximized is not None:
             ip_max = self.grid_cameras[self.slot_maximized]
@@ -2689,7 +2700,7 @@ class CentralMonitoramento(ctk.CTk):
             h_btn = 30
             spc = 5
             x_offset = -10
-            y_start = -10
+            y_start = -45
 
         # Aplica cores baseadas no estado
         color_exp = self.ACCENT_RED if is_max else self.GRAY_DARK
@@ -2982,6 +2993,8 @@ class CentralMonitoramento(ctk.CTk):
         self.cache_ui_text = [None] * self.num_slots
         self.cache_ui_image = [None] * self.num_slots
         self.cache_ui_size = [None] * self.num_slots
+        self.slot_canal_frames = []
+        self.slot_canal_btns = []
         self.slot_selecionado = 0
 
         # 3. Destrói grid atual e reconstrói
@@ -3205,9 +3218,15 @@ class CentralMonitoramento(ctk.CTk):
         if not ip or ip == "0.0.0.0":
             txt = ""
             bg_color = "#000000"
+            try: self.slot_canal_frames[idx].place_forget()
+            except: pass
         else:
             txt = f"CONECTANDO...\n{ip}" if idx == self.slot_selecionado else "CONECTANDO..."
             bg_color = self.BG_SIDEBAR
+            try:
+                self.slot_canal_frames[idx].place(relx=1.0, rely=1.0, x=-5, y=-5, anchor="se")
+                self.atualizar_destaque_canais(idx)
+            except: pass
 
         try:
             # Tenta configurar o label existente
@@ -3713,6 +3732,58 @@ class CentralMonitoramento(ctk.CTk):
             except: pass
         return {}
 
+    def carregar_canais_manuais(self):
+        if os.path.exists(self.arquivo_canais):
+            try:
+                with open(self.arquivo_canais, "r", encoding='utf-8') as f:
+                    self.canais_manuais = json.load(f)
+                    print(f"[*] Sincronismo: {len(self.canais_manuais)} canais manuais carregados.")
+            except Exception as e:
+                print(f"[-] Erro ao carregar canais manuais: {e}")
+
+    def salvar_canais_manuais(self):
+        try:
+            with open(self.arquivo_canais, "w", encoding='utf-8') as f:
+                json.dump(self.canais_manuais, f, ensure_ascii=False, indent=4)
+        except Exception as e:
+            print(f"[-] Erro ao salvar canais manuais: {e}")
+
+    def mudar_canal_manual(self, idx, canal_val):
+        if not (0 <= idx < self.num_slots): return
+        ip = self.grid_cameras[idx]
+        if not ip or ip == "0.0.0.0": return
+
+        print(f"[*] Sincronismo: Alterando canal de {ip} para {canal_val}")
+        if canal_val == "Auto":
+            if ip in self.canais_manuais:
+                del self.canais_manuais[ip]
+        else:
+            self.canais_manuais[ip] = canal_val
+
+        self.salvar_canais_manuais()
+
+        # Atualiza destaques visualmente para todos os slots que mostram este IP
+        for i, grid_ip in enumerate(self.grid_cameras):
+            if grid_ip == ip:
+                self.atualizar_destaque_canais(i)
+
+        # Notifica o handler se ele existir
+        handler = self.camera_handlers.get(ip)
+        if handler and handler != "CONECTANDO":
+            novo_canal_alvo = self.obter_canal_alvo(ip)
+            handler.set_canal(novo_canal_alvo)
+
+    def atualizar_destaque_canais(self, idx):
+        if not (0 <= idx < len(self.slot_canal_btns)): return
+        ip = self.grid_cameras[idx]
+        escolha = self.canais_manuais.get(ip, "Auto")
+
+        for c_val, btn in self.slot_canal_btns[idx].items():
+            if c_val == str(escolha):
+                btn.configure(fg_color=self.ACCENT_RED)
+            else:
+                btn.configure(fg_color=self.GRAY_DARK)
+
     def obter_ips_ordenados(self):
         def chave_ordenacao(ip): return self.dados_cameras.get(ip, f"IP {ip}").lower()
         return sorted(self.ips_unicos, key=chave_ordenacao)
@@ -3779,6 +3850,9 @@ class CentralMonitoramento(ctk.CTk):
                                             image=self.nav_icons["RIGHT"], command=lambda: self.navegar_grid("RIGHT"))
 
         self.slot_labels = []
+        self.slot_canal_frames = []
+        self.slot_canal_btns = []
+
         for i in range(self.num_slots):
             row, col = i // self.grid_cols, i % self.grid_cols
             frm = ctk.CTkFrame(self.grid_frame, fg_color=self.BG_SIDEBAR, corner_radius=2, border_width=2, border_color="black")
@@ -3787,6 +3861,22 @@ class CentralMonitoramento(ctk.CTk):
 
             lbl = ctk.CTkLabel(frm, text="", corner_radius=0)
             lbl.pack(expand=True, fill="both", padx=2, pady=2)
+
+            # Barra de Qualidade/Canal (Inferior Direito)
+            f_canais = ctk.CTkFrame(frm, fg_color="transparent", height=25)
+            # f_canais.place(relx=1.0, rely=1.0, x=-5, y=-5, anchor="se") # Será mostrado no atribuir_ip_ao_slot
+
+            btns_slot = {}
+            for c_val in ["101", "102", "103", "Auto"]:
+                btn = ctk.CTkButton(f_canais, text=c_val, width=32, height=18, corner_radius=2,
+                                     font=("Roboto", 9, "bold"), fg_color=self.GRAY_DARK,
+                                     hover_color=self.ACCENT_RED,
+                                     command=lambda idx=i, v=c_val: self.mudar_canal_manual(idx, v))
+                btn.pack(side="left", padx=1)
+                btns_slot[c_val] = btn
+
+            self.slot_canal_frames.append(f_canais)
+            self.slot_canal_btns.append(btns_slot)
 
             for widget in [frm, lbl]:
                 widget.bind("<Button-1>", lambda e, idx=i: self.ao_pressionar_slot(e, idx))
