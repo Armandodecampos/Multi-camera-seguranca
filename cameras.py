@@ -268,6 +268,7 @@ sem_conexao = threading.Semaphore(20)
 
 # Global para sincronizar a data do sistema de monitoramento biométrico
 DATA_SISTEMA_ATUAL = datetime.now().strftime("%Y-%m-%d")
+INICIO_PROGRAMA_BIO = datetime.now().replace(microsecond=0)
 ULTIMA_ATUALIZACAO_RELATORIO = 0
 INTERVALO_ATUALIZACAO_HTML = 10 # Segundos
 
@@ -279,7 +280,9 @@ def normalizar_data(data_str):
 
     # Formato correto: YYYY-MM-DD HH:MM:SS
     if re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$", data_str):
-        DATA_SISTEMA_ATUAL = data_str.split(' ')[0]
+        data_evento = data_str.split(' ')[0]
+        if data_evento >= DATA_SISTEMA_ATUAL:
+            DATA_SISTEMA_ATUAL = data_evento
         return data_str
 
     # Formato BR: DD/MM/YYYY HH:MM:SS
@@ -292,6 +295,14 @@ def normalizar_data(data_str):
         return f"{DATA_SISTEMA_ATUAL} {data_str}"
 
     return data_str
+
+def evento_bio_apos_inicio(data_evento):
+    try:
+        instante_evento = datetime.strptime(data_evento, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        print(f"[-] BIO: Evento ignorado com data inválida: {data_evento}")
+        return False
+    return instante_evento >= INICIO_PROGRAMA_BIO
 
 def salvar_foto_bio(base64_data, id_usuario, data_evento):
     """Decodifica a string Base64 da imagem e salva em arquivo local."""
@@ -648,6 +659,8 @@ class BioMonitorThread(threading.Thread):
                             dispositivo = linha["dispositivo"]
                             leitor = linha["leitor"]
                             data_evento = normalizar_data(linha["horario"])
+                            if not evento_bio_apos_inicio(data_evento):
+                                continue
 
                             # Sanitização
                             if "Verificação de abertura normal" in evento:
@@ -668,6 +681,8 @@ class BioMonitorThread(threading.Thread):
                                 if dados:
                                     id_usuario, nome_usuario, evento, dispositivo, data_evento_raw, base64_foto, leitor_popup = dados
                                     data_evento = normalizar_data(data_evento_raw)
+                                    if not evento_bio_apos_inicio(data_evento):
+                                        continue
 
                                     if "Verificação de abertura normal" in evento:
                                         evento = evento.replace("Verificação de abertura normal", "").strip()
@@ -4441,8 +4456,5 @@ class CentralMonitoramento(ctk.CTk):
 if __name__ == "__main__":
     dados_sistema = carregar_dados_sistema()
     app = CentralMonitoramento(dados_iniciais=dados_sistema)
-
-    # Carrega cache biométrico e popula a UI (Background)
-    threading.Thread(target=carregar_cache_bio, args=(app.queue_bio,), daemon=True).start()
 
     app.mainloop()
