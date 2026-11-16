@@ -4151,11 +4151,6 @@ class CentralMonitoramento(ctk.CTk):
         self.atualizar_lista_predefinicoes_ui()
 
     def aplicar_predefinicao(self, nome):
-        # Interrompe registro global se houver troca de predefinição,
-        # pois pode mudar o viewport e confundir o mosaico esperado
-        if self.gravando_tudo:
-            self.toggle_gravacao_tudo()
-
         dados = self.predefinicoes.get(nome)
         if not dados: return
 
