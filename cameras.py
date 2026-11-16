@@ -2973,10 +2973,6 @@ class CentralMonitoramento(ctk.CTk):
 
     def mudar_quantidade_slots(self, nova_qtd):
         """Altera a quantidade de slots do grid e reconstrói a interface."""
-        # Interrompe registro global antes de mudar dimensões do mosaico
-        if self.gravando_tudo:
-            self.toggle_gravacao_tudo()
-
         print(f"SISTEMA: Mudando para {nova_qtd} câmeras...")
 
         # 1. Salva nova preferência
