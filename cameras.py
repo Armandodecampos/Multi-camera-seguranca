@@ -1091,7 +1091,9 @@ class CameraHandler:
 
                 # Controle de FPS Dinâmico
                 target_fps = 25 if (self.prioridade or self.gravando) else 7
-                if now - last_process_time < (1.0 / target_fps):
+                tempo_restante = (1.0 / target_fps) - (now - last_process_time)
+                if tempo_restante > 0:
+                    time.sleep(min(0.01, tempo_restante))
                     continue
 
                 # Se a UI ainda não consumiu o frame anterior, e não é prioridade, podemos pular
@@ -2888,8 +2890,8 @@ class CentralMonitoramento(ctk.CTk):
                         frame_to_resize = handler.frame_bgr
 
             if frame_to_resize is not None:
-                # Redimensiona usando OpenCV com CUBIC para melhor qualidade
-                frame_res = cv2.resize(frame_to_resize, (slot_w, slot_h), interpolation=cv2.INTER_CUBIC)
+                # INTER_AREA é mais eficiente e adequado ao reduzir quadros para o mosaico.
+                frame_res = cv2.resize(frame_to_resize, (slot_w, slot_h), interpolation=cv2.INTER_AREA)
                 canvas[y_off:y_off+slot_h, x_start:x_start+slot_w] = frame_res
             else:
                 # Slot vazio ou offline (Borda e texto)
