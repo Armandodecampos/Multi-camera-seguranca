@@ -1247,8 +1247,10 @@ class CameraHandler:
         self.rodando = False
         self.conectado = False
 
-    def pegar_frame(self):
+    def pegar_frame(self, apenas_novo=False):
         with self.lock:
+            if apenas_novo and not self.novo_frame:
+                return None
             self.novo_frame = False
             return self.frame_pil
 
@@ -1311,6 +1313,9 @@ class CentralMonitoramento(ctk.CTk):
         self.title("Sistema de Monitoramento ABI - Full Control V5 + PTZ")
         self.geometry("1800x1000")
         ctk.set_appearance_mode("Dark")
+        self._configure_refresh_id = None
+        self._force_frame_refresh = False
+        self.bind("<Configure>", self._agendar_atualizacao_janela, add="+")
 
         # Credenciais para PTZ
         self.user_ptz = "admin"
@@ -2489,6 +2494,26 @@ class CentralMonitoramento(ctk.CTk):
         if self.slot_maximized is not None:
             self.comando_ptz("STOP")
 
+    def _agendar_atualizacao_janela(self, event):
+        if event.widget is not self:
+            return
+
+        if self._configure_refresh_id is not None:
+            self.after_cancel(self._configure_refresh_id)
+        self._configure_refresh_id = self.after(200, self._atualizar_renderizacao_janela)
+
+    def _atualizar_renderizacao_janela(self):
+        self._configure_refresh_id = None
+        if not hasattr(self, "slot_ctk_images"):
+            return
+
+        self._window_scaling = self._get_window_scaling()
+        self._force_frame_refresh = True
+        for i in range(self.num_slots):
+            self.slot_ctk_images[i] = None
+            self.cache_ui_image[i] = None
+            self.cache_ui_size[i] = None
+
     def navegar_grid(self, direcao):
         """Move o viewport do grid na direção especificada, se válido."""
         # Se algum slot estiver maximizado, não permite navegar (opcional, mas recomendado)
@@ -3383,7 +3408,8 @@ class CentralMonitoramento(ctk.CTk):
         try:
             # Lógica de detecção de restauração (Minimizado -> Normal)
             is_iconic = self.state() == "iconic"
-            force_refresh = False
+            force_refresh = self._force_frame_refresh
+            self._force_frame_refresh = False
 
             if is_iconic:
                 self.iconic_state = True
@@ -3523,9 +3549,8 @@ class CentralMonitoramento(ctk.CTk):
                     # Verifica se já processamos este IP neste loop
                     pil_img = current_ips_pil.get(ip)
                     if pil_img is None:
-                        if handler.novo_frame or force_refresh:
-                            pil_img = handler.pegar_frame()
-                        elif self.gravando_tudo:
+                        pil_img = handler.pegar_frame(apenas_novo=not force_refresh)
+                        if pil_img is None and self.gravando_tudo:
                             with handler.lock:
                                 pil_img = handler.frame_pil
 
