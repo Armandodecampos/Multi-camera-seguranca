@@ -18,7 +18,7 @@ from requests.auth import HTTPDigestAuth
 import subprocess
 import platform
 from datetime import datetime
-from tkinter import filedialog
+from tkinter import filedialog, messagebox
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
@@ -3843,8 +3843,11 @@ class CentralMonitoramento(ctk.CTk):
 
         ctk.CTkLabel(frame_seletor, text="SELETOR DE IP", font=("Roboto", 12, "bold"), text_color=self.TEXT_S).pack(pady=(0, 5))
 
+        container_controles = ctk.CTkFrame(frame_seletor, fg_color="transparent")
+        container_controles.pack()
+
         container_octetos = ctk.CTkFrame(frame_seletor, fg_color="transparent")
-        container_octetos.pack()
+        container_octetos.pack(side="left")
 
         self.octet_entries = []
         for i in range(4):
@@ -3869,14 +3872,16 @@ class CentralMonitoramento(ctk.CTk):
             if i < 3:
                 ctk.CTkLabel(container_octetos, text=".", font=("Roboto", 20, "bold")).pack(side="left", padx=2, pady=(25, 0))
 
+        self.btn_aplicar_ip = ctk.CTkButton(
+            container_controles, text="Aplicar", width=70, height=32,
+            fg_color=self.ACCENT_WINE, hover_color=self.ACCENT_RED,
+            command=self.aplicar_ip_seletor
+        )
+        self.btn_aplicar_ip.pack(side="left", padx=(8, 0))
+
     def alterar_octeto(self, idx, delta):
         self.ip_seletor_atual[idx] = (self.ip_seletor_atual[idx] + delta) % 256
         self.atualizar_labels_seletor()
-
-        # Se houver um slot selecionado, atualiza o IP dele
-        if self.slot_selecionado is not None:
-            novo_ip = ".".join(map(str, self.ip_seletor_atual))
-            self.atribuir_ip_ao_slot(self.slot_selecionado, novo_ip)
 
     def ao_digitar_octeto(self, event, idx):
         val_str = self.octet_entries[idx].get()
@@ -3884,9 +3889,6 @@ class CentralMonitoramento(ctk.CTk):
             val = int(val_str)
             if 0 <= val <= 255:
                 self.ip_seletor_atual[idx] = val
-                if self.slot_selecionado is not None:
-                    novo_ip = ".".join(map(str, self.ip_seletor_atual))
-                    self.atribuir_ip_ao_slot(self.slot_selecionado, novo_ip, salvar=False) # Não salva em cada tecla
 
     def confirmar_digitacao_octeto(self, idx):
         val_str = self.octet_entries[idx].get()
@@ -3894,10 +3896,19 @@ class CentralMonitoramento(ctk.CTk):
             val = int(val_str)
             if 0 <= val <= 255:
                 self.ip_seletor_atual[idx] = val
-                if self.slot_selecionado is not None:
-                    novo_ip = ".".join(map(str, self.ip_seletor_atual))
-                    self.atribuir_ip_ao_slot(self.slot_selecionado, novo_ip, salvar=True)
         self.atualizar_labels_seletor()
+
+    def aplicar_ip_seletor(self):
+        octetos = [entry.get() for entry in self.octet_entries]
+        if any(not octeto.isdigit() or not 0 <= int(octeto) <= 255 for octeto in octetos):
+            messagebox.showerror("IP inválido", "Informe quatro octetos entre 0 e 255.", parent=self)
+            return
+
+        self.ip_seletor_atual = [int(octeto) for octeto in octetos]
+        novo_ip = ".".join(map(str, self.ip_seletor_atual))
+        self.atualizar_labels_seletor()
+        self.atribuir_ip_ao_slot(self.slot_selecionado, novo_ip)
+        self.selecionar_slot(self.slot_selecionado)
 
     def atualizar_labels_seletor(self):
         for i, val in enumerate(self.ip_seletor_atual):
