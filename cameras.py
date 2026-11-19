@@ -1327,6 +1327,7 @@ class CentralMonitoramento(ctk.CTk):
 
         # Binds de Teclado
         self.bind("<Escape>", lambda event: self.sair_tela_cheia())
+        self.bind("<Delete>", self.ao_apertar_delete)
 
         # Binds para PTZ
         self.bind("<MouseWheel>", self.ao_scroll_mouse)
@@ -2616,6 +2617,16 @@ class CentralMonitoramento(ctk.CTk):
         
         if self.slot_maximized == idx: self.restaurar_grid()
         self.selecionar_slot(idx)
+
+    def ao_apertar_delete(self, event=None):
+        foco = self.focus_get()
+        if foco is not None and foco.winfo_toplevel() is not self:
+            return
+        if isinstance(foco, (ctk.CTkEntry, ctk.CTkTextbox)):
+            return
+        if self.ip_selecionado:
+            self.limpar_slot_atual()
+            return "break"
 
     def salvar_grid(self):
         try:
