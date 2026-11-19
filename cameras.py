@@ -3844,10 +3844,10 @@ class CentralMonitoramento(ctk.CTk):
         ctk.CTkLabel(frame_seletor, text="SELETOR DE IP", font=("Roboto", 12, "bold"), text_color=self.TEXT_S).pack(pady=(0, 5))
 
         container_controles = ctk.CTkFrame(frame_seletor, fg_color="transparent")
-        container_controles.pack()
+        container_controles.pack(anchor="center")
 
-        container_octetos = ctk.CTkFrame(frame_seletor, fg_color="transparent")
-        container_octetos.pack(side="left")
+        container_octetos = ctk.CTkFrame(container_controles, fg_color="transparent")
+        container_octetos.pack(anchor="center")
 
         self.octet_entries = []
         for i in range(4):
@@ -3877,7 +3877,7 @@ class CentralMonitoramento(ctk.CTk):
             fg_color=self.ACCENT_WINE, hover_color=self.ACCENT_RED,
             command=self.aplicar_ip_seletor
         )
-        self.btn_aplicar_ip.pack(side="left", padx=(8, 0))
+        self.btn_aplicar_ip.pack(pady=(8, 0), anchor="center")
 
     def alterar_octeto(self, idx, delta):
         self.ip_seletor_atual[idx] = (self.ip_seletor_atual[idx] + delta) % 256
