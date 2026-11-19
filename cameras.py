@@ -1281,9 +1281,9 @@ class CentralMonitoramento(ctk.CTk):
 
     def configurar_variaveis_grid(self, num_slots):
         """Define as dimensões do grid com base na quantidade de slots."""
-        # Garante que o valor esteja entre 1 e 40
+        # Garante que o valor esteja entre 1 e 100
         try:
-            num_slots = max(1, min(40, int(num_slots)))
+            num_slots = max(1, min(100, int(num_slots)))
         except:
             num_slots = 20
 
@@ -2973,7 +2973,7 @@ class CentralMonitoramento(ctk.CTk):
         seg_button.pack(pady=10, padx=20, fill="x")
 
         # Seleção de Quantidade de Câmeras (Grid)
-        ctk.CTkLabel(modal, text="Quantidade de câmeras (Grid 1-40):", font=("Roboto", 14), text_color=self.TEXT_S).pack(pady=(20, 5))
+        ctk.CTkLabel(modal, text="Quantidade de câmeras (Grid 1-100):", font=("Roboto", 14), text_color=self.TEXT_S).pack(pady=(20, 5))
 
         frame_grid = ctk.CTkFrame(modal, fg_color="transparent")
         frame_grid.pack(pady=5, padx=20, fill="x")
@@ -2985,11 +2985,11 @@ class CentralMonitoramento(ctk.CTk):
         def aplicar_custom_grid():
             try:
                 nova_qtd = int(entry_grid.get())
-                if 1 <= nova_qtd <= 40:
+                if 1 <= nova_qtd <= 100:
                     if nova_qtd != self.num_slots:
                         self.mudar_quantidade_slots(nova_qtd)
                 else:
-                    self.abrir_modal_alerta("Erro", "A quantidade deve ser entre 1 e 40.")
+                    self.abrir_modal_alerta("Erro", "A quantidade deve ser entre 1 e 100.")
             except ValueError:
                 self.abrir_modal_alerta("Erro", "Digite um número válido.")
 
